@@ -25,6 +25,8 @@ export const MapView = ({ center, directions }: any) => {
   useEffect(() => {
     console.log("MapView useEffect triggered");
     console.log("GOOGLE_API_KEY:", GOOGLE_API_KEY);
+    console.log("GOOGLE_API_KEY length:", GOOGLE_API_KEY?.length);
+    console.log("Environment:", process.env.NODE_ENV);
     console.log("mapRef.current:", mapRef.current);
     
     const initializeMap = () => {
@@ -71,6 +73,8 @@ export const MapView = ({ center, directions }: any) => {
     script.async = true;
     script.onerror = (error) => {
       console.error("Google Maps script failed to load:", error);
+      console.error("API Key:", GOOGLE_API_KEY);
+      console.error("Check if API key is valid and has proper permissions");
     };
     window.initMap = initializeMap;
     document.body.appendChild(script);
