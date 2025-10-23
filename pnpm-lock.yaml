@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@googlemaps/js-api-loader':
+        specifier: ^2.0.1
+        version: 2.0.1
       '@react-google-maps/api':
         specifier: ^2.20.7
         version: 2.20.7(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
@@ -177,6 +180,9 @@ packages:
 
   '@googlemaps/js-api-loader@1.16.8':
     resolution: {integrity: sha512-CROqqwfKotdO6EBjZO/gQGVTbeDps5V7Mt9+8+5Q+jTg5CRMi3Ii/L9PmV3USROrt2uWxtGzJHORmByxyo9pSQ==}
+
+  '@googlemaps/js-api-loader@2.0.1':
+    resolution: {integrity: sha512-YUtKJSWH6FiE/6Ii+NP+WfkvoZ55DLwyqthKmVYxZZwn/ny310dvz9Zw3cO1besEhGxA9lW7Ctjmzae1putjXQ==}
 
   '@googlemaps/markerclusterer@2.5.3':
     resolution: {integrity: sha512-x7lX0R5yYOoiNectr10wLgCBasNcXFHiADIBdmn7jQllF2B5ENQw5XtZK+hIw4xnV0Df0xhN4LN98XqA5jaiOw==}
@@ -2159,6 +2165,10 @@ snapshots:
       levn: 0.4.1
 
   '@googlemaps/js-api-loader@1.16.8': {}
+
+  '@googlemaps/js-api-loader@2.0.1':
+    dependencies:
+      '@types/google.maps': 3.58.1
 
   '@googlemaps/markerclusterer@2.5.3':
     dependencies:
