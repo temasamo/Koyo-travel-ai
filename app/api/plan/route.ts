@@ -23,7 +23,8 @@ export async function POST() {
 
   const data = await res.json();
   const content = data.choices[0].message.content;
-  const json = JSON.parse(content.match(/\[.*\]/s)?.[0] || "[]");
+  const jsonMatch = content.match(/\[.*\]/);
+  const json = JSON.parse(jsonMatch ? jsonMatch[0] : "[]");
 
   return NextResponse.json({ places: json });
 }
