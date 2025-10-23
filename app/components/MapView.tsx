@@ -37,6 +37,10 @@ export const MapView = ({ center, directions }: any) => {
       
       // 少し遅延を追加してDOMの準備を確実にする
       setTimeout(() => {
+        if (!mapRef.current) {
+          console.log("mapRef.current is null in setTimeout");
+          return;
+        }
         const mapInstance = new google.maps.Map(mapRef.current, {
           center: { lat: 38.1516, lng: 140.2728 },
           zoom: 12,
