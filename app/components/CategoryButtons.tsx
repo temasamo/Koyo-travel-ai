@@ -16,3 +16,4 @@ export const CategoryButtons = ({ onSelect }: { onSelect: (cat: string) => void 
     ))}
   </div>
 );
+

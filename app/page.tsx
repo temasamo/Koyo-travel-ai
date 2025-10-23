@@ -1,6 +1,5 @@
 "use client";
 import React, { useState } from "react";
-import { CategoryButtons } from "./components/CategoryButtons";
 import { MapView } from "./components/MapView";
 
 export default function Page() {
@@ -18,7 +17,6 @@ export default function Page() {
   return (
     <main className="p-6 text-center">
       <h1 className="text-2xl font-bold text-green-800 mb-4">古窯旅コンシェルAI（β）</h1>
-      <CategoryButtons onSelect={handleCategorySelect} />
       {routeData && <pre className="text-left bg-gray-100 p-4 rounded-lg">{JSON.stringify(routeData, null, 2)}</pre>}
       <div className="mt-4">
         <MapView center={{ lat: 38.1517, lng: 140.2728 }} />
@@ -26,3 +24,4 @@ export default function Page() {
     </main>
   );
 }
+

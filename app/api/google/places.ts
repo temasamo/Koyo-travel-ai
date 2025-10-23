@@ -7,3 +7,4 @@ export async function POST(req: Request) {
   const res = await axios.get(url);
   return Response.json(res.data);
 }
+
