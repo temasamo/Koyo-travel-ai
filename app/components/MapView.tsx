@@ -14,7 +14,7 @@ const categories = [
   { key: "history", label: "歴史", type: "museum" },
 ];
 
-export const MapView = ({ center, directions }: any) => {
+export const MapView = ({ center, directions, route }: any) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const [markers, setMarkers] = useState<google.maps.Marker[]>([]);
@@ -116,6 +116,39 @@ export const MapView = ({ center, directions }: any) => {
       }
     );
   }, [activeCategory, map]);
+
+  // ✅ AI生成ルートの描画
+  useEffect(() => {
+    if (!map || !route || route.length < 2) return;
+
+    console.log("Drawing route:", route);
+    
+    const service = new google.maps.DirectionsService();
+    const renderer = new google.maps.DirectionsRenderer();
+    renderer.setMap(map);
+
+    const waypoints = route.slice(1, -1).map((name: string) => ({ 
+      location: name, 
+      stopover: true 
+    }));
+
+    service.route(
+      {
+        origin: route[0],
+        destination: route[route.length - 1],
+        waypoints,
+        travelMode: google.maps.TravelMode.DRIVING,
+      },
+      (result, status) => {
+        if (status === google.maps.DirectionsStatus.OK) {
+          console.log("Route drawn successfully");
+          renderer.setDirections(result);
+        } else {
+          console.error("ルート描画エラー:", status);
+        }
+      }
+    );
+  }, [route, map]);
 
   return (
     <div className="w-full">
