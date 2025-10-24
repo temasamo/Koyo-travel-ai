@@ -44,8 +44,8 @@ export default function CustomInfoPanel({ placeId, onClose }: Props) {
         const placeDetails: PlaceDetails = {
           displayName: res.place.displayName || undefined,
           formattedAddress: res.place.formattedAddress || undefined,
-          rating: res.place.rating,
-          userRatingCount: res.place.userRatingCount,
+          rating: res.place.rating || undefined,
+          userRatingCount: res.place.userRatingCount || undefined,
           websiteURI: res.place.websiteURI || undefined,
           photos: res.place.photos,
         };
