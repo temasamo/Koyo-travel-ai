@@ -26,18 +26,19 @@ export default function CustomInfoPanel({ placeId, onClose }: Props) {
 
       const place = new Place({
         id: placeId,
-        requestedFields: [
-          "displayName",
-          "formattedAddress",
-          "rating",
-          "userRatingCount",
-          "websiteURI",
-          "photos",
-        ],
       });
 
       try {
-        const res = await place.fetchFields();
+        const res = await place.fetchFields({
+          fields: [
+            "displayName",
+            "formattedAddress",
+            "rating",
+            "userRatingCount",
+            "websiteURI",
+            "photos",
+          ],
+        });
         setDetails(res);
       } catch (e) {
         console.error("fetchFields error:", e);
