@@ -39,7 +39,18 @@ export default function CustomInfoPanel({ placeId, onClose }: Props) {
             "photos",
           ],
         });
-        setDetails(res);
+        
+        // Extract the data from the Place object to match PlaceDetails interface
+        const placeDetails: PlaceDetails = {
+          displayName: res.displayName?.text,
+          formattedAddress: res.formattedAddress,
+          rating: res.rating,
+          userRatingCount: res.userRatingCount,
+          websiteURI: res.websiteURI,
+          photos: res.photos,
+        };
+        
+        setDetails(placeDetails);
       } catch (e) {
         console.error("fetchFields error:", e);
         setDetails(null);
