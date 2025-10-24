@@ -1,7 +1,30 @@
 import React from "react";
 import Image from "next/image";
 
-export default function FaceMeshResultCard({ faceMesh }) {
+interface FaceMeshData {
+  faceWidth: number;
+  faceWidthChange: number;
+  faceHeight: number;
+  faceHeightChange: number;
+  eyeDistance: number;
+  eyeDistanceChange: number;
+  browEyeDistance: number;
+  browEyeChange: number;
+  liftAngle: number;
+  liftAngleChange: number;
+  lowerFaceRatio: number;
+  lowerFaceChange: number;
+  faceLineAngle: number;
+  symmetryIndex: number;
+  cheekVolume: number;
+  eyeLiftAngle: number;
+}
+
+interface Props {
+  faceMesh: FaceMeshData;
+}
+
+export default function FaceMeshResultCard({ faceMesh }: Props) {
   return (
     <div className="bg-blue-50 border border-blue-200 rounded-xl p-6 mt-6">
       <h3 className="text-lg font-semibold text-blue-700 mb-4">
@@ -89,7 +112,15 @@ export default function FaceMeshResultCard({ faceMesh }) {
   );
 }
 
-function MetricWithIllustration({ label, value, diff, desc, image }) {
+interface MetricProps {
+  label: string;
+  value: string;
+  diff?: string;
+  desc: string;
+  image: string;
+}
+
+function MetricWithIllustration({ label, value, diff, desc, image }: MetricProps) {
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-3 flex flex-col items-center text-center">
       <div className="font-semibold text-gray-800 mb-1">{label}</div>
