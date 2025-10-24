@@ -42,12 +42,12 @@ export default function CustomInfoPanel({ placeId, onClose }: Props) {
         
         // Extract the data from the Place object to match PlaceDetails interface
         const placeDetails: PlaceDetails = {
-          displayName: res.displayName?.text,
-          formattedAddress: res.formattedAddress,
-          rating: res.rating,
-          userRatingCount: res.userRatingCount,
-          websiteURI: res.websiteURI,
-          photos: res.photos,
+          displayName: res.place.displayName?.text,
+          formattedAddress: res.place.formattedAddress,
+          rating: res.place.rating,
+          userRatingCount: res.place.userRatingCount,
+          websiteURI: res.place.websiteURI,
+          photos: res.place.photos,
         };
         
         setDetails(placeDetails);
