@@ -9,14 +9,16 @@ interface Location {
 
 interface MapViewProps {
   locations?: Location[];
+  onPlaceClick?: (place: string) => void;
 }
 
-export default function MapView({ locations = [] }: MapViewProps) {
+export default function MapView({ locations = [], onPlaceClick }: MapViewProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const [markers, setMarkers] = useState<google.maps.marker.AdvancedMarkerElement[]>([]);
   const [isMapReady, setIsMapReady] = useState(false);
   const routePolyline = useRef<google.maps.DirectionsRenderer | null>(null);
+  const infoWindows = useRef<google.maps.InfoWindow[]>([]);
 
   useEffect(() => {
     const loadGoogleMaps = () =>
@@ -143,6 +145,12 @@ export default function MapView({ locations = [] }: MapViewProps) {
         });
         setMarkers([]);
 
+        // 既存の吹き出しをクリア
+        infoWindows.current.forEach(infoWindow => {
+          infoWindow.close();
+        });
+        infoWindows.current = [];
+
         // 既存のルートをクリア
         if (routePolyline.current) {
           routePolyline.current.setMap(null);
@@ -181,7 +189,54 @@ export default function MapView({ locations = [] }: MapViewProps) {
                 title: place.displayName?.text || location.name,
               });
 
+              // 吹き出しを作成
+              const infoWindow = new google.maps.InfoWindow({
+                content: `<div style="min-width:200px; font-size:14px;">${place.displayName?.text || location.name}</div>`,
+              });
+
+              // マーカークリック時の処理
+              marker.addListener("click", async () => {
+                // 既存の吹き出しを全部閉じる
+                infoWindows.current.forEach(iw => iw.close());
+
+                // AI要約を取得して吹き出し更新
+                try {
+                  const res = await fetch("/api/chat/summary", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ place: place.displayName?.text || location.name }),
+                  });
+                  const data = await res.json();
+
+                  infoWindow.setContent(`
+                    <div style="min-width:200px; font-size:14px;">
+                      <strong>${place.displayName?.text || location.name}</strong><br/>
+                      ${data.summary}
+                    </div>
+                  `);
+
+                  infoWindow.open(map, marker);
+
+                  // チャットにも通知
+                  if (onPlaceClick) {
+                    onPlaceClick(place.displayName?.text || location.name);
+                  }
+
+                  map.panTo(position);
+                } catch (error) {
+                  console.error("❌ AI要約取得エラー:", error);
+                  infoWindow.setContent(`
+                    <div style="min-width:200px; font-size:14px;">
+                      <strong>${place.displayName?.text || location.name}</strong><br/>
+                      説明を取得できませんでした。
+                    </div>
+                  `);
+                  infoWindow.open(map, marker);
+                }
+              });
+
               newMarkers.push(marker);
+              infoWindows.current.push(infoWindow);
               geocodedPlaces.push({
                 name: place.displayName?.text || location.name,
                 location: position

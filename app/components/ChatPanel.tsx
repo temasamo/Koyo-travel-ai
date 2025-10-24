@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 interface Location {
   name: string;
@@ -14,14 +14,44 @@ interface ExtractedLocations {
 
 interface ChatPanelProps {
   onLocationsExtracted?: (locations: Location[]) => void;
+  selectedPlace?: string;
 }
 
-export default function ChatPanel({ onLocationsExtracted }: ChatPanelProps) {
+export default function ChatPanel({ onLocationsExtracted, selectedPlace }: ChatPanelProps) {
   const [messages, setMessages] = useState<{ role: string; content: string }[]>([
     { role: "assistant", content: "こんにちは！旅AIプランナーです。どちらから出発されますか？" },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // 選択された場所の詳細説明を取得
+  useEffect(() => {
+    if (selectedPlace && selectedPlace.trim()) {
+      const fetchPlaceDetails = async () => {
+        try {
+          const res = await fetch("/api/chat/travel", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ 
+              messages: [
+                { role: "user", content: `${selectedPlace}について詳しく教えてください。歴史、特徴、おすすめポイント、アクセス方法などを含めて教えてください。` }
+              ] 
+            }),
+          });
+          const data = await res.json();
+          
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", content: `📍 ${selectedPlace}について\n\n${data.reply}` },
+          ]);
+        } catch (error) {
+          console.error("場所詳細取得エラー:", error);
+        }
+      };
+
+      fetchPlaceDetails();
+    }
+  }, [selectedPlace]);
 
   const handleSend = async () => {
     if (!input.trim()) return;
