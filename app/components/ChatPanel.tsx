@@ -50,9 +50,13 @@ export default function ChatPanel({ onLocationsExtracted }: ChatPanelProps) {
             body: JSON.stringify({ text: data.reply }),
           });
           const extractData: ExtractedLocations = await extractRes.json();
+          console.log("🔍 地名抽出結果:", extractData);
           
           if (extractData.locations && extractData.locations.length > 0) {
+            console.log("📍 抽出された地名:", extractData.locations);
             onLocationsExtracted(extractData.locations);
+          } else {
+            console.log("❌ 地名が抽出されませんでした");
           }
         } catch (extractError) {
           console.error("地名抽出エラー:", extractError);
@@ -95,7 +99,15 @@ export default function ChatPanel({ onLocationsExtracted }: ChatPanelProps) {
           className="flex-1 p-2 border rounded-md focus:outline-none focus:ring"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleSend()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              // 日本語入力中でない場合のみ送信
+              if (!e.nativeEvent.isComposing && e.keyCode !== 229) {
+                handleSend();
+              }
+            }
+          }}
         />
         <button
           onClick={handleSend}
