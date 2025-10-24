@@ -2,7 +2,21 @@
 
 import { useState } from "react";
 
-export default function ChatPanel() {
+interface Location {
+  name: string;
+  type: string;
+  confidence: number;
+}
+
+interface ExtractedLocations {
+  locations: Location[];
+}
+
+interface ChatPanelProps {
+  onLocationsExtracted?: (locations: Location[]) => void;
+}
+
+export default function ChatPanel({ onLocationsExtracted }: ChatPanelProps) {
   const [messages, setMessages] = useState<{ role: string; content: string }[]>([
     { role: "assistant", content: "こんにちは！旅AIプランナーです。どちらから出発されますか？" },
   ]);
@@ -26,6 +40,24 @@ export default function ChatPanel() {
       const data = await res.json();
 
       setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
+
+      // 地名抽出
+      if (data.reply && onLocationsExtracted) {
+        try {
+          const extractRes = await fetch("/api/extract-locations", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: data.reply }),
+          });
+          const extractData: ExtractedLocations = await extractRes.json();
+          
+          if (extractData.locations && extractData.locations.length > 0) {
+            onLocationsExtracted(extractData.locations);
+          }
+        } catch (extractError) {
+          console.error("地名抽出エラー:", extractError);
+        }
+      }
     } catch (error) {
       setMessages((prev) => [
         ...prev,

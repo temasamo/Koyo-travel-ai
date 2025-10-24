@@ -1,8 +1,21 @@
 "use client";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
-export default function MapView() {
+interface Location {
+  name: string;
+  type: string;
+  confidence: number;
+}
+
+interface MapViewProps {
+  locations?: Location[];
+}
+
+export default function MapView({ locations = [] }: MapViewProps) {
   const mapRef = useRef<HTMLDivElement>(null);
+  const [map, setMap] = useState<google.maps.Map | null>(null);
+  const [markers, setMarkers] = useState<google.maps.marker.AdvancedMarkerElement[]>([]);
+  const [isMapReady, setIsMapReady] = useState(false);
 
   useEffect(() => {
     const loadGoogleMaps = () =>
@@ -22,15 +35,17 @@ export default function MapView() {
       const { AdvancedMarkerElement } = (await google.maps.importLibrary("marker")) as google.maps.MarkerLibrary;
 
       const target = { lat: 38.146, lng: 140.274 }; // 上山エリア中心
-      const map = new Map(mapRef.current!, {
+      const mapInstance = new Map(mapRef.current!, {
         center: target,
         zoom: 15,
         mapId: "KOYO_TRAVEL_AI_MAP",
       });
+      setMap(mapInstance);
+      setIsMapReady(true);
       console.log("✅ Map initialized successfully");
 
       const marker = new AdvancedMarkerElement({
-        map,
+        map: mapInstance,
         position: target,
         title: "上山温泉エリア",
       });
@@ -39,7 +54,7 @@ export default function MapView() {
 
       marker.addListener("click", async () => {
         info.setContent("読み込み中…");
-        info.open(map, marker);
+        info.open(mapInstance, marker);
 
         try {
           // 🥇 Step1: 検索して place_id を取得
@@ -110,6 +125,83 @@ export default function MapView() {
 
     init();
   }, []);
+
+  // 地名に基づいてピンを追加する機能
+  useEffect(() => {
+    if (!map || !isMapReady || locations.length === 0) return;
+
+    const addLocationMarkers = async () => {
+      try {
+      const { AdvancedMarkerElement } = (await google.maps.importLibrary("marker")) as google.maps.MarkerLibrary;
+      
+      // 既存のマーカーをクリア
+      markers.forEach(marker => {
+        if (marker && marker.map) {
+          marker.map = null;
+        }
+      });
+      setMarkers([]);
+
+      const newMarkers: google.maps.marker.AdvancedMarkerElement[] = [];
+
+      for (const location of locations) {
+        try {
+          // 地名で検索
+          const searchRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Goog-Api-Key": String(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY),
+              "X-Goog-FieldMask": "places.id,places.displayName,places.location",
+            },
+            body: JSON.stringify({
+              textQuery: `${location.name} 山形県`,
+              languageCode: "ja",
+              regionCode: "JP",
+            }),
+          });
+
+          const searchData = await searchRes.json();
+          const place = searchData.places?.[0];
+
+          if (place?.location) {
+            const marker = new AdvancedMarkerElement({
+              map,
+              position: {
+                lat: place.location.latitude,
+                lng: place.location.longitude,
+              },
+              title: place.displayName?.text || location.name,
+            });
+
+            newMarkers.push(marker);
+          }
+        } catch (error) {
+          console.error(`❌ マーカー追加失敗: ${location.name}`, error);
+        }
+      }
+
+      setMarkers(newMarkers);
+
+      // マーカーが追加された場合、地図の中心を調整
+      if (newMarkers.length > 0) {
+        const bounds = new google.maps.LatLngBounds();
+        newMarkers.forEach(marker => {
+          if (marker && marker.position) {
+            bounds.extend(marker.position);
+          }
+        });
+        if (!bounds.isEmpty()) {
+          map.fitBounds(bounds);
+        }
+      }
+    } catch (error) {
+      console.error("❌ マーカー追加エラー:", error);
+    }
+    };
+
+    addLocationMarkers();
+  }, [map, isMapReady, locations]);
 
   return <div ref={mapRef} style={{ width: "100%", height: "100vh" }} />;
 }
