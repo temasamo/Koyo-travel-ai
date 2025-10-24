@@ -16,13 +16,14 @@ export default function MapView({ locations = [] }: MapViewProps) {
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const [markers, setMarkers] = useState<google.maps.marker.AdvancedMarkerElement[]>([]);
   const [isMapReady, setIsMapReady] = useState(false);
+  const routePolyline = useRef<google.maps.DirectionsRenderer | null>(null);
 
   useEffect(() => {
     const loadGoogleMaps = () =>
       new Promise<void>((resolve, reject) => {
         if (window.google?.maps) return resolve();
         const s = document.createElement("script");
-        s.src = `https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}&libraries=marker&v=weekly`;
+        s.src = `https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}&libraries=marker,places&v=weekly`;
         s.async = true;
         s.onload = () => resolve();
         s.onerror = () => reject(new Error("Google Maps failed to load"));
@@ -126,82 +127,136 @@ export default function MapView({ locations = [] }: MapViewProps) {
     init();
   }, []);
 
-  // 地名に基づいてピンを追加する機能
+  // 地名に基づいてピンを追加し、ルートを描画する機能
   useEffect(() => {
     if (!map || !isMapReady || locations.length === 0) return;
 
-    const addLocationMarkers = async () => {
+    const addLocationMarkersAndRoute = async () => {
       try {
-      const { AdvancedMarkerElement } = (await google.maps.importLibrary("marker")) as google.maps.MarkerLibrary;
-      
-      // 既存のマーカーをクリア
-      markers.forEach(marker => {
-        if (marker && marker.map) {
-          marker.map = null;
-        }
-      });
-      setMarkers([]);
-
-      const newMarkers: google.maps.marker.AdvancedMarkerElement[] = [];
-
-      for (const location of locations) {
-        try {
-          // 地名で検索
-          const searchRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Goog-Api-Key": String(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY),
-              "X-Goog-FieldMask": "places.id,places.displayName,places.location",
-            },
-            body: JSON.stringify({
-              textQuery: `${location.name} 山形県`,
-              languageCode: "ja",
-              regionCode: "JP",
-            }),
-          });
-
-          const searchData = await searchRes.json();
-          const place = searchData.places?.[0];
-
-          if (place?.location) {
-            const marker = new AdvancedMarkerElement({
-              map,
-              position: {
-                lat: place.location.latitude,
-                lng: place.location.longitude,
-              },
-              title: place.displayName?.text || location.name,
-            });
-
-            newMarkers.push(marker);
-          }
-        } catch (error) {
-          console.error(`❌ マーカー追加失敗: ${location.name}`, error);
-        }
-      }
-
-      setMarkers(newMarkers);
-
-      // マーカーが追加された場合、地図の中心を調整
-      if (newMarkers.length > 0) {
-        const bounds = new google.maps.LatLngBounds();
-        newMarkers.forEach(marker => {
-          if (marker && marker.position) {
-            bounds.extend(marker.position);
+        const { AdvancedMarkerElement } = (await google.maps.importLibrary("marker")) as google.maps.MarkerLibrary;
+        
+        // 既存のマーカーとルートをクリア
+        markers.forEach(marker => {
+          if (marker && marker.map) {
+            marker.map = null;
           }
         });
-        if (!bounds.isEmpty()) {
-          map.fitBounds(bounds);
+        setMarkers([]);
+
+        // 既存のルートをクリア
+        if (routePolyline.current) {
+          routePolyline.current.setMap(null);
+          routePolyline.current = null;
         }
+
+        const newMarkers: google.maps.marker.AdvancedMarkerElement[] = [];
+        const geocodedPlaces: { name: string; location: google.maps.LatLng }[] = [];
+
+        for (const location of locations) {
+          try {
+            // 地名で検索
+            const searchRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Goog-Api-Key": String(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY),
+                "X-Goog-FieldMask": "places.id,places.displayName,places.location",
+              },
+              body: JSON.stringify({
+                textQuery: `${location.name} 山形県`,
+                languageCode: "ja",
+                regionCode: "JP",
+              }),
+            });
+
+            const searchData = await searchRes.json();
+            const place = searchData.places?.[0];
+
+            if (place?.location) {
+              const position = new google.maps.LatLng(place.location.latitude, place.location.longitude);
+              
+              const marker = new AdvancedMarkerElement({
+                map,
+                position,
+                title: place.displayName?.text || location.name,
+              });
+
+              newMarkers.push(marker);
+              geocodedPlaces.push({
+                name: place.displayName?.text || location.name,
+                location: position
+              });
+            }
+          } catch (error) {
+            console.error(`❌ マーカー追加失敗: ${location.name}`, error);
+          }
+        }
+
+        setMarkers(newMarkers);
+
+        // ルートを描画（2点以上ある場合）
+        if (geocodedPlaces.length >= 2) {
+          drawRoute(geocodedPlaces);
+        }
+
+        // マーカーが追加された場合、地図の中心を調整
+        if (newMarkers.length > 0) {
+          const bounds = new google.maps.LatLngBounds();
+          newMarkers.forEach(marker => {
+            if (marker && marker.position) {
+              bounds.extend(marker.position);
+            }
+          });
+          if (!bounds.isEmpty()) {
+            map.fitBounds(bounds);
+          }
+        }
+      } catch (error) {
+        console.error("❌ マーカー追加エラー:", error);
       }
-    } catch (error) {
-      console.error("❌ マーカー追加エラー:", error);
-    }
     };
 
-    addLocationMarkers();
+    addLocationMarkersAndRoute();
   }, [map, isMapReady, locations]);
+
+  // 🔹 Directions APIでルートを描く関数
+  const drawRoute = (geocodedPlaces: { name: string; location: google.maps.LatLng }[]) => {
+    if (!map) return;
+
+    const directionsService = new google.maps.DirectionsService();
+    const directionsRenderer = new google.maps.DirectionsRenderer({
+      map: map,
+      suppressMarkers: true, // マーカーは独自に出してるので抑制
+      preserveViewport: true,
+      polylineOptions: {
+        strokeColor: "#007BFF",
+        strokeWeight: 5,
+        strokeOpacity: 0.7,
+      },
+    });
+
+    const waypoints = geocodedPlaces.slice(1, -1).map((p) => ({
+      location: p.location,
+      stopover: true,
+    }));
+
+    directionsService.route(
+      {
+        origin: geocodedPlaces[0].location,
+        destination: geocodedPlaces[geocodedPlaces.length - 1].location,
+        waypoints,
+        travelMode: google.maps.TravelMode.DRIVING,
+      },
+      (result, status) => {
+        if (status === google.maps.DirectionsStatus.OK && result) {
+          directionsRenderer.setDirections(result);
+          routePolyline.current = directionsRenderer;
+        } else {
+          console.error("❌ ルート描画失敗:", status);
+        }
+      }
+    );
+  };
 
   return <div ref={mapRef} style={{ width: "100%", height: "100vh" }} />;
 }
