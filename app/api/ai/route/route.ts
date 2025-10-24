@@ -24,3 +24,4 @@ export async function POST(req: Request) {
   return Response.json(response.choices[0].message);
 }
 
+

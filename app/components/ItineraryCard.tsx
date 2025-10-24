@@ -22,3 +22,4 @@ export const ItineraryCard = ({ title, description, spots }: ItineraryCardProps)
   </div>
 );
 
+
