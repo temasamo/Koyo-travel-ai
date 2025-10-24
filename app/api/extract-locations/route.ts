@@ -41,6 +41,10 @@ export async function POST(req: Request) {
 
   const response = completion.choices[0].message.content;
   
+  if (!response) {
+    return NextResponse.json({ locations: [] });
+  }
+  
   try {
     const parsed = JSON.parse(response);
     return NextResponse.json(parsed);
