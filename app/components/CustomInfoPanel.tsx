@@ -13,7 +13,7 @@ interface PlaceDetails {
   rating?: number;
   userRatingCount?: number;
   websiteURI?: string;
-  photos?: google.maps.places.PlacePhoto[];
+  photos?: { name: string; widthPx?: number; heightPx?: number }[];
 }
 
 export default function CustomInfoPanel({ placeId, onClose }: Props) {
