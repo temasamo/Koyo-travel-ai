@@ -77,7 +77,7 @@ export default function CustomInfoPanel({ placeId, onClose }: Props) {
     );
   }
 
-  const photoUrl = details.photos?.[0]?.getUrl?.({ maxHeight: 220 }) || null;
+  const photoUrl = details.photos?.[0]?.getURI?.({ maxHeight: 220 }) || null;
 
   return (
     <aside className="absolute top-4 right-4 bg-white shadow-2xl border p-4 rounded-2xl w-80 max-h-[80vh] overflow-y-auto">
