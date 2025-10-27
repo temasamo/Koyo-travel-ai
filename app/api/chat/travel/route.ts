@@ -43,20 +43,25 @@ export async function POST(req: Request) {
   });
 
   const reply = completion.choices[0].message.content;
+  console.log("🔍 AI生回答:", reply);
   
   try {
     // JSON形式の回答を試行
     const parsedReply = JSON.parse(reply || "{}");
+    console.log("🔍 JSON解析成功:", parsedReply);
     
     // pinsが含まれている場合はそのまま返す
     if (parsedReply.pins) {
+      console.log("🔍 pins検出、そのまま返却:", parsedReply);
       return NextResponse.json(parsedReply);
     }
     
     // pinsが含まれていない場合は従来形式で返す
+    console.log("🔍 pinsなし、従来形式で返却:", { reply: parsedReply.response || reply });
     return NextResponse.json({ reply: parsedReply.response || reply });
   } catch (error) {
     // JSON解析に失敗した場合は従来形式で返す
+    console.log("🔍 JSON解析失敗、従来形式で返却:", { reply });
     return NextResponse.json({ reply });
   }
 }

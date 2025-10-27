@@ -429,7 +429,7 @@ export default function MapView({ area, locations = [], onPlaceClick, aiPins = [
 
     // 既存のAIピンをクリア
     aiMarkers.current.forEach(marker => {
-      if (marker && marker.map) {
+      if (marker && marker.getMap()) {
         marker.setMap(null);
       }
     });
