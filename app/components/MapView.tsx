@@ -426,6 +426,12 @@ export default function MapView({ area, locations = [], onPlaceClick, aiPins = [
   // AIピンを表示する関数
   const addAIMarkers = async (pins: AIPin[]) => {
     if (!map || !isMapReady) return;
+    
+    // Google Maps APIが完全に読み込まれているかチェック
+    if (!google?.maps?.places?.PlacesService || !google?.maps?.LatLngBounds) {
+      console.warn("⚠️ Google Maps API not fully loaded yet");
+      return;
+    }
 
     // 既存のAIピンをクリア
     aiMarkers.current.forEach(marker => {
@@ -513,7 +519,7 @@ export default function MapView({ area, locations = [], onPlaceClick, aiPins = [
   // AIピンが変更された時の処理
   useEffect(() => {
     console.log("🎯 AIピン変更検出:", aiPins);
-    if (aiPins.length > 0) {
+    if (aiPins.length > 0 && isMapReady) {
       addAIMarkers(aiPins);
     }
   }, [aiPins, map, isMapReady]);

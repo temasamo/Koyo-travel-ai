@@ -9,3 +9,4 @@ export const FIXED_PLACE_IDS = {
   "山寺": "ChIJx8bksK2UG18R9Y0fTXXQ0tw",
   "立石寺": "ChIJx8bksK2UG18R9Y0fTXXQ0tw",
 };
+
