@@ -410,7 +410,6 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
       // フォールバック: シンプルなポリラインで接続
       if (geocodedPlaces.length >= 2) {
         console.log("🔄 フォールバック: シンプルな線で接続");
-        const { Polyline } = await google.maps.importLibrary("geometry") as google.maps.GeometryLibrary;
         
         const path = geocodedPlaces.map(p => p.location);
         const polyline = new google.maps.Polyline({
