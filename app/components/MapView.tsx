@@ -14,14 +14,23 @@ interface AIPin {
 }
 
 interface MapViewProps {
-  area: AreaKey;
+  area?: AreaKey;
   locations?: Location[];
   onPlaceClick?: (place: string) => void;
   aiPins?: AIPin[];
+  defaultCenter?: google.maps.LatLngLiteral;
+  defaultZoom?: number;
 }
 
-export default function MapView({ area, locations = [], onPlaceClick, aiPins = [] }: MapViewProps) {
-  const config = AREA_CONFIG[area];
+export default function MapView({ 
+  area, 
+  locations = [], 
+  onPlaceClick, 
+  aiPins = [], 
+  defaultCenter, 
+  defaultZoom 
+}: MapViewProps) {
+  const config = area ? AREA_CONFIG[area] : null;
   const mapRef = useRef<HTMLDivElement>(null);
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const [markers, setMarkers] = useState<google.maps.marker.AdvancedMarkerElement[]>([]);
@@ -48,8 +57,8 @@ export default function MapView({ area, locations = [], onPlaceClick, aiPins = [
       const { AdvancedMarkerElement } = (await google.maps.importLibrary("marker")) as google.maps.MarkerLibrary;
 
       const mapInstance = new Map(mapRef.current!, {
-        center: config.center,
-        zoom: config.zoom,
+        center: defaultCenter || config?.center || { lat: 35.68, lng: 139.76 },
+        zoom: defaultZoom || config?.zoom || 6,
         mapId: "KOYO_TRAVEL_AI_MAP",
       });
       setMap(mapInstance);
@@ -355,7 +364,7 @@ export default function MapView({ area, locations = [], onPlaceClick, aiPins = [
     };
 
     addLocationMarkersAndRoute();
-  }, [map, isMapReady, locations, area]);
+  }, [map, isMapReady, locations, area, defaultCenter, defaultZoom]);
 
   // 🔹 Directions APIでルートを描く関数
   const drawRoute = async (geocodedPlaces: { name: string; location: google.maps.LatLng }[]) => {
@@ -391,7 +400,7 @@ export default function MapView({ area, locations = [], onPlaceClick, aiPins = [
       console.log("📍 経由地数:", limitedWaypoints.length);
 
       const result = await directionsService.route({
-        origin: config.center,
+        origin: defaultCenter || config?.center || { lat: 35.68, lng: 139.76 },
         destination: geocodedPlaces[geocodedPlaces.length - 1].location,
         waypoints: limitedWaypoints,
         travelMode: google.maps.TravelMode.DRIVING,
@@ -446,8 +455,8 @@ export default function MapView({ area, locations = [], onPlaceClick, aiPins = [
 
     for (const pin of pins) {
       try {
-        // エリア名を補完して検索精度を向上
-        const searchQuery = buildSearchQuery(pin.name, area);
+        // エリア名を補完して検索精度を向上（areaがない場合はそのまま）
+        const searchQuery = area ? buildSearchQuery(pin.name, area) : pin.name;
         
         const request = {
           query: searchQuery,

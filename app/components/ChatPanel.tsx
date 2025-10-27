@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter, usePathname } from "next/navigation";
+import extractLocation from "@/lib/extractLocation";
 
 interface Location {
   name: string;
@@ -23,12 +25,15 @@ interface ChatPanelProps {
   systemPrompt?: string;
   initialMessages?: { role: string; content: string }[];
   onAIPinsExtracted?: (pins: AIPin[]) => void;
+  aiName?: string;
 }
 
-export default function ChatPanel({ onLocationsExtracted, selectedPlace, systemPrompt, initialMessages, onAIPinsExtracted }: ChatPanelProps) {
+export default function ChatPanel({ onLocationsExtracted, selectedPlace, systemPrompt, initialMessages, onAIPinsExtracted, aiName = "旅AIプランナー" }: ChatPanelProps) {
+  const router = useRouter();
+  const pathname = usePathname();
   const [messages, setMessages] = useState<{ role: string; content: string }[]>(
     initialMessages || [
-      { role: "assistant", content: "こんにちは！旅AIプランナーです。どちらから出発されますか？" },
+      { role: "assistant", content: `こんにちは！${aiName}です。どちらから出発されますか？` },
     ]
   );
   const [input, setInput] = useState("");
@@ -65,6 +70,22 @@ export default function ChatPanel({ onLocationsExtracted, selectedPlace, systemP
 
   const handleSend = async () => {
     if (!input.trim()) return;
+    
+    // 地名抽出による自動ルーティング
+    const extractedLocation = extractLocation(input);
+    if (extractedLocation) {
+      // 上山温泉ページで他地域が指定された場合
+      if (pathname === "/kaminoyama" && !input.includes("上山")) {
+        router.push(`/planner?query=${encodeURIComponent(input)}`);
+        return;
+      }
+      // 富士五湖ページで他地域が指定された場合
+      if (pathname === "/fujigoko" && !input.includes("富士") && !input.includes("河口湖") && !input.includes("山中湖")) {
+        router.push(`/planner?query=${encodeURIComponent(input)}`);
+        return;
+      }
+    }
+    
     const newMessage = { role: "user", content: input };
     setMessages((prev) => [...prev, newMessage]);
     setInput("");
