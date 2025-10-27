@@ -15,12 +15,16 @@ interface ExtractedLocations {
 interface ChatPanelProps {
   onLocationsExtracted?: (locations: Location[]) => void;
   selectedPlace?: string;
+  systemPrompt?: string;
+  initialMessages?: { role: string; content: string }[];
 }
 
-export default function ChatPanel({ onLocationsExtracted, selectedPlace }: ChatPanelProps) {
-  const [messages, setMessages] = useState<{ role: string; content: string }[]>([
-    { role: "assistant", content: "こんにちは！旅AIプランナーです。どちらから出発されますか？" },
-  ]);
+export default function ChatPanel({ onLocationsExtracted, selectedPlace, systemPrompt, initialMessages }: ChatPanelProps) {
+  const [messages, setMessages] = useState<{ role: string; content: string }[]>(
+    initialMessages || [
+      { role: "assistant", content: "こんにちは！旅AIプランナーです。どちらから出発されますか？" },
+    ]
+  );
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -65,7 +69,10 @@ export default function ChatPanel({ onLocationsExtracted, selectedPlace }: ChatP
       const res = await fetch("/api/chat/travel", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: [...messages, newMessage] }),
+        body: JSON.stringify({ 
+          messages: [...messages, newMessage],
+          systemPrompt: systemPrompt 
+        }),
       });
       const data = await res.json();
 

@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { AREA_CONFIG, AreaKey, buildSearchQuery } from "./MapConfig";
 
 interface Location {
   name: string;
@@ -8,11 +9,13 @@ interface Location {
 }
 
 interface MapViewProps {
+  area: AreaKey;
   locations?: Location[];
   onPlaceClick?: (place: string) => void;
 }
 
-export default function MapView({ locations = [], onPlaceClick }: MapViewProps) {
+export default function MapView({ area, locations = [], onPlaceClick }: MapViewProps) {
+  const config = AREA_CONFIG[area];
   const mapRef = useRef<HTMLDivElement>(null);
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const [markers, setMarkers] = useState<google.maps.marker.AdvancedMarkerElement[]>([]);
@@ -37,93 +40,81 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
       const { Map } = (await google.maps.importLibrary("maps")) as google.maps.MapsLibrary;
       const { AdvancedMarkerElement } = (await google.maps.importLibrary("marker")) as google.maps.MarkerLibrary;
 
-      const target = { lat: 38.146, lng: 140.274 }; // 上山エリア中心
       const mapInstance = new Map(mapRef.current!, {
-        center: target,
-        zoom: 15,
+        center: config.center,
+        zoom: config.zoom,
         mapId: "KOYO_TRAVEL_AI_MAP",
       });
       setMap(mapInstance);
       setIsMapReady(true);
       console.log("✅ Map initialized successfully");
 
-      const marker = new AdvancedMarkerElement({
-        map: mapInstance,
-        position: target,
-        title: "上山温泉エリア",
-      });
+      // 🧩 固定ピン表示処理（一時停止）
+      // if (config.fixedPlaceIds && config.fixedPlaceIds.length > 0) {
+      //   const service = new google.maps.places.PlacesService(mapInstance);
+      //   const infoWindow = new google.maps.InfoWindow();
 
-      const info = new google.maps.InfoWindow({ content: "読み込み中…" });
+      //   config.fixedPlaceIds.forEach((placeId: string) => {
+      //     service.getDetails(
+      //       {
+      //         placeId,
+      //         fields: [
+      //           "name",
+      //           "geometry",
+      //           "photos",
+      //           "formatted_address",
+      //           "rating",
+      //           "url",
+      //         ],
+      //       },
+      //       (place: any, status: any) => {
+      //         if (status !== google.maps.places.PlacesServiceStatus.OK) {
+      //           console.warn(`❌ Place取得失敗: ${placeId}`, status);
+      //           return;
+      //         }
+      //         if (!place?.geometry?.location) return;
 
-      marker.addListener("click", async () => {
-        info.setContent("読み込み中…");
-        info.open(mapInstance, marker);
+      //         const marker = new AdvancedMarkerElement({
+      //           map: mapInstance,
+      //           position: place.geometry.location,
+      //           title: place.name,
+      //           content: new google.maps.marker.PinElement({
+      //             background: "#4285F4",
+      //             borderColor: "#137333",
+      //             glyphColor: "#ffffff",
+      //           }),
+      //         });
 
-        try {
-          // 🥇 Step1: 検索して place_id を取得
-          const searchRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Goog-Api-Key": String(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY),
-              "X-Goog-FieldMask": "places.id",
-            },
-            body: JSON.stringify({
-              textQuery: "あべくん珈琲 山形県上山市",
-              languageCode: "ja",
-              regionCode: "JP",
-            }),
-          });
-          const searchData = await searchRes.json();
-          const placeId = searchData.places?.[0]?.id;
-          if (!placeId) throw new Error("place_id 取得失敗");
+      //         const photoUrl =
+      //           place.photos && place.photos.length > 0
+      //             ? place.photos[0].getUrl({ maxWidth: 300, maxHeight: 200 })
+      //             : "/images/no-image.jpg";
 
-          // 🥈 Step2: 詳細取得
-          const detailRes = await fetch(`https://places.googleapis.com/v1/places/${placeId}?languageCode=ja&regionCode=JP`, {
-            headers: {
-              "X-Goog-Api-Key": String(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY),
-              "X-Goog-FieldMask": [
-                "id",
-                "displayName",
-                "formattedAddress",
-                "rating",
-                "userRatingCount",
-                "photos",
-                "types",
-                "websiteUri",
-                "googleMapsUri",
-                "editorialSummary",
-                "currentOpeningHours",
-              ].join(","),
-            },
-          });
+      //         const content = `
+      //           <div style="max-width: 260px;">
+      //             <h3 style="margin: 0 0 8px; color: #222;">${place.name}</h3>
+      //             <img src="${photoUrl}" alt="${place.name}" style="width:100%; border-radius:8px; margin-bottom:8px;">
+      //             <p style="font-size:13px; color:#555; margin:0;">📍 ${place.formatted_address || "住所情報なし"}</p>
+      //             <p style="font-size:13px; color:#555; margin:4px 0;">⭐ ${place.rating || "評価なし"}</p>
+      //             <a href="${place.url}" target="_blank" rel="noopener noreferrer"
+      //                style="color:#1a73e8; font-weight:500; text-decoration:none;">
+      //               Googleマップで見る
+      //             </a>
+      //           </div>
+      //         `;
 
-          const place = await detailRes.json();
-          console.log("📸 Full Place Detail:", place);
+      //         marker.addListener("click", () => {
+      //           infoWindows.current.forEach(iw => iw.close());
+      //           infoWindow.setContent(content);
+      //           infoWindow.open(mapInstance, marker);
+      //           infoWindows.current.push(infoWindow);
+      //         });
 
-          // ✅ 写真生成
-          let photoUrl = "";
-          if (place.photos?.[0]?.name) {
-            photoUrl = `https://places.googleapis.com/v1/${place.photos[0].name}/media?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}&maxWidthPx=400`;
-          }
-
-          const html = `
-            <div style="width:300px;font-family:sans-serif;">
-              ${photoUrl ? `<img src="${photoUrl}" style="width:100%;border-radius:8px;margin-bottom:8px;">` : ""}
-              <h3>${place.displayName?.text ?? "名称不明"}</h3>
-              <p>${place.formattedAddress ?? ""}</p>
-              <p>⭐ ${place.rating ?? "-"} (${place.userRatingCount ?? 0}件)</p>
-              ${place.editorialSummary?.text ? `<p>${place.editorialSummary.text}</p>` : ""}
-              ${place.websiteUri ? `<p><a href="${place.websiteUri}" target="_blank">公式サイト</a></p>` : ""}
-              <p><a href="${place.googleMapsUri}" target="_blank">Googleマップで見る</a></p>
-            </div>
-          `;
-          info.setContent(html);
-        } catch (e: any) {
-          console.error("❌ Place fetch failed", e);
-          info.setContent("<div>情報を取得できませんでした。</div>");
-        }
-      });
+      //         console.log("✅ 固定ピン表示成功:", place.name);
+      //       }
+      //     );
+      //   });
+      // }
     };
 
     init();
@@ -171,7 +162,7 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
                 "X-Goog-FieldMask": "places.id,places.displayName,places.location",
               },
               body: JSON.stringify({
-                textQuery: `${location.name} 山形県`,
+                textQuery: buildSearchQuery(location.name, area),
                 languageCode: "ja",
                 regionCode: "JP",
               }),
@@ -357,7 +348,7 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
     };
 
     addLocationMarkersAndRoute();
-  }, [map, isMapReady, locations]);
+  }, [map, isMapReady, locations, area]);
 
   // 🔹 Directions APIでルートを描く関数
   const drawRoute = async (geocodedPlaces: { name: string; location: google.maps.LatLng }[]) => {
@@ -393,7 +384,7 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
       console.log("📍 経由地数:", limitedWaypoints.length);
 
       const result = await directionsService.route({
-        origin: geocodedPlaces[0].location,
+        origin: config.center,
         destination: geocodedPlaces[geocodedPlaces.length - 1].location,
         waypoints: limitedWaypoints,
         travelMode: google.maps.TravelMode.DRIVING,
