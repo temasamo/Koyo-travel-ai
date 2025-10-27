@@ -12,14 +12,20 @@ interface ExtractedLocations {
   locations: Location[];
 }
 
+interface AIPin {
+  name: string;
+  type: string;
+}
+
 interface ChatPanelProps {
   onLocationsExtracted?: (locations: Location[]) => void;
   selectedPlace?: string;
   systemPrompt?: string;
   initialMessages?: { role: string; content: string }[];
+  onAIPinsExtracted?: (pins: AIPin[]) => void;
 }
 
-export default function ChatPanel({ onLocationsExtracted, selectedPlace, systemPrompt, initialMessages }: ChatPanelProps) {
+export default function ChatPanel({ onLocationsExtracted, selectedPlace, systemPrompt, initialMessages, onAIPinsExtracted }: ChatPanelProps) {
   const [messages, setMessages] = useState<{ role: string; content: string }[]>(
     initialMessages || [
       { role: "assistant", content: "こんにちは！旅AIプランナーです。どちらから出発されますか？" },
@@ -75,10 +81,24 @@ export default function ChatPanel({ onLocationsExtracted, selectedPlace, systemP
         }),
       });
       const data = await res.json();
+      console.log("🔍 APIレスポンス:", data);
+      console.log("🔍 data.pins:", data.pins);
+      console.log("🔍 data.pins?.length:", data.pins?.length);
 
-      setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
+      // AIピンが含まれている場合の処理
+      if (data.pins && data.pins.length > 0) {
+        console.log("🤖 AIピン検出:", data.pins);
+        if (onAIPinsExtracted) {
+          onAIPinsExtracted(data.pins);
+        }
+        setMessages((prev) => [...prev, { role: "assistant", content: data.response }]);
+      } else {
+        // 従来のテキストレスポンス
+        console.log("📝 テキストレスポンス:", data.reply);
+        setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
+      }
 
-      // 地名抽出
+      // 地名抽出（従来のテキストレスポンスの場合のみ）
       if (data.reply && onLocationsExtracted) {
         try {
           const extractRes = await fetch("/api/extract-locations", {

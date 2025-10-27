@@ -8,13 +8,19 @@ interface Location {
   confidence: number;
 }
 
+interface AIPin {
+  name: string;
+  type: string;
+}
+
 interface MapViewProps {
   area: AreaKey;
   locations?: Location[];
   onPlaceClick?: (place: string) => void;
+  aiPins?: AIPin[];
 }
 
-export default function MapView({ area, locations = [], onPlaceClick }: MapViewProps) {
+export default function MapView({ area, locations = [], onPlaceClick, aiPins = [] }: MapViewProps) {
   const config = AREA_CONFIG[area];
   const mapRef = useRef<HTMLDivElement>(null);
   const [map, setMap] = useState<google.maps.Map | null>(null);
@@ -22,6 +28,7 @@ export default function MapView({ area, locations = [], onPlaceClick }: MapViewP
   const [isMapReady, setIsMapReady] = useState(false);
   const routePolyline = useRef<google.maps.DirectionsRenderer | null>(null);
   const infoWindows = useRef<google.maps.InfoWindow[]>([]);
+  const aiMarkers = useRef<google.maps.Marker[]>([]);
 
   useEffect(() => {
     const loadGoogleMaps = () =>
@@ -415,6 +422,101 @@ export default function MapView({ area, locations = [], onPlaceClick }: MapViewP
       }
     }
   };
+
+  // AIピンを表示する関数
+  const addAIMarkers = async (pins: AIPin[]) => {
+    if (!map || !isMapReady) return;
+
+    // 既存のAIピンをクリア
+    aiMarkers.current.forEach(marker => {
+      if (marker && marker.map) {
+        marker.setMap(null);
+      }
+    });
+    aiMarkers.current = [];
+
+    const service = new google.maps.places.PlacesService(map);
+    const bounds = new google.maps.LatLngBounds();
+
+    for (const pin of pins) {
+      try {
+        // エリア名を補完して検索精度を向上
+        const searchQuery = buildSearchQuery(pin.name, area);
+        
+        const request = {
+          query: searchQuery,
+          fields: ["name", "geometry", "place_id", "formatted_address", "rating", "photos"],
+        };
+
+        service.findPlaceFromQuery(request, (results, status) => {
+          if (status === google.maps.places.PlacesServiceStatus.OK && results?.[0]) {
+            const place = results[0];
+            
+            if (place.geometry?.location) {
+              const marker = new google.maps.Marker({
+                map: map,
+                position: place.geometry.location,
+                title: place.name,
+                icon: {
+                  url: "http://maps.google.com/mapfiles/ms/icons/blue-dot.png",
+                  scaledSize: new google.maps.Size(32, 32),
+                },
+                zIndex: 50, // Directionsより低く設定
+              });
+
+              // InfoWindowを作成
+              const photoUrl = place.photos?.[0]?.getUrl({ maxWidth: 300, maxHeight: 200 }) || "/images/no-image.jpg";
+              const content = `
+                <div style="max-width: 260px;">
+                  <h3 style="margin: 0 0 8px; color: #222;">${place.name}</h3>
+                  <img src="${photoUrl}" alt="${place.name}" style="width:100%; border-radius:8px; margin-bottom:8px;">
+                  <p style="font-size:13px; color:#555; margin:0;">📍 ${place.formatted_address || "住所情報なし"}</p>
+                  <p style="font-size:13px; color:#555; margin:4px 0;">⭐ ${place.rating || "評価なし"}</p>
+                  <p style="font-size:12px; color:#666; margin:2px 0;">🤖 AI推薦</p>
+                </div>
+              `;
+
+              const infoWindow = new google.maps.InfoWindow({ content });
+              
+              marker.addListener("click", () => {
+                infoWindows.current.forEach(iw => iw.close());
+                infoWindow.open(map, marker);
+                infoWindows.current.push(infoWindow);
+              });
+
+              aiMarkers.current.push(marker);
+              bounds.extend(place.geometry.location);
+              
+              console.log("✅ AIピン表示成功:", place.name);
+            }
+          } else {
+            console.warn("❌ AIピン検索失敗:", pin.name, status);
+          }
+        });
+      } catch (error) {
+        console.error("❌ AIピン処理エラー:", pin.name, error);
+      }
+    }
+
+    // マップをAIピンに合わせてズーム
+    setTimeout(() => {
+      if (aiMarkers.current.length > 0) {
+        map.fitBounds(bounds);
+        const currentZoom = map.getZoom();
+        if (currentZoom && currentZoom > 15) {
+          map.setZoom(15);
+        }
+      }
+    }, 1000);
+  };
+
+  // AIピンが変更された時の処理
+  useEffect(() => {
+    console.log("🎯 AIピン変更検出:", aiPins);
+    if (aiPins.length > 0) {
+      addAIMarkers(aiPins);
+    }
+  }, [aiPins, map, isMapReady]);
 
   return <div ref={mapRef} style={{ width: "100%", height: "100vh" }} />;
 }

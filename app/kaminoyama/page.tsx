@@ -10,9 +10,15 @@ interface Location {
   confidence: number;
 }
 
+interface AIPin {
+  name: string;
+  type: string;
+}
+
 export default function KaminoyamaPage() {
   const [extractedLocations, setExtractedLocations] = useState<Location[]>([]);
   const [selectedPlace, setSelectedPlace] = useState<string>("");
+  const [aiPins, setAiPins] = useState<AIPin[]>([]);
 
   const handleLocationsExtracted = (locations: Location[]) => {
     setExtractedLocations(locations);
@@ -20,6 +26,10 @@ export default function KaminoyamaPage() {
 
   const handlePlaceClick = (place: string) => {
     setSelectedPlace(place);
+  };
+
+  const handleAIPinsExtracted = (pins: AIPin[]) => {
+    setAiPins(pins);
   };
 
   return (
@@ -32,7 +42,8 @@ export default function KaminoyamaPage() {
         <MapView 
           area="kaminoyama" 
           locations={extractedLocations} 
-          onPlaceClick={handlePlaceClick} 
+          onPlaceClick={handlePlaceClick}
+          aiPins={aiPins}
         />
       </div>
       
@@ -42,6 +53,7 @@ export default function KaminoyamaPage() {
           <ChatPanel 
             onLocationsExtracted={handleLocationsExtracted} 
             selectedPlace={selectedPlace}
+            onAIPinsExtracted={handleAIPinsExtracted}
           />
         </div>
       </div>

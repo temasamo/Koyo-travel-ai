@@ -10,9 +10,15 @@ interface Location {
   confidence: number;
 }
 
+interface AIPin {
+  name: string;
+  type: string;
+}
+
 export default function FujigokoPage() {
   const [extractedLocations, setExtractedLocations] = useState<Location[]>([]);
   const [selectedPlace, setSelectedPlace] = useState<string>("");
+  const [aiPins, setAiPins] = useState<AIPin[]>([]);
 
   // 🗻 富士五湖専用システムプロンプト
   const systemPrompt = `
@@ -32,6 +38,19 @@ export default function FujigokoPage() {
 - あなたの名前は「湖香（ここ）」です。
 - 富士五湖エリアを担当するローカル旅AIとしてユーザーを案内します。
 - 冒頭で自己紹介を入れてください（例：「こんにちは！富士五湖担当AIの湖香です！」）。
+
+### ピン表示機能
+- ユーザーが「ケーキ屋さんを探して」「カフェを教えて」など具体的な施設検索を求めた場合のみ
+- 以下のJSON形式で回答してください：
+{
+  "response": "富士五湖エリアのおすすめケーキ屋さんを2件見つけました！",
+  "pins": [
+    { "name": "パティスリー山中湖", "type": "ai" },
+    { "name": "スイーツガーデン河口湖", "type": "ai" }
+  ]
+}
+
+- 通常の旅行プラン相談の場合は、従来通りテキストで回答してください
 `;
 
   const [introMessage] = useState({
@@ -47,6 +66,10 @@ export default function FujigokoPage() {
     setSelectedPlace(place);
   };
 
+  const handleAIPinsExtracted = (pins: AIPin[]) => {
+    setAiPins(pins);
+  };
+
   return (
     <main className="w-full h-screen flex">
       {/* 左側：マップエリア */}
@@ -57,7 +80,8 @@ export default function FujigokoPage() {
         <MapView 
           area="fujigoko" 
           locations={extractedLocations} 
-          onPlaceClick={handlePlaceClick} 
+          onPlaceClick={handlePlaceClick}
+          aiPins={aiPins}
         />
       </div>
       
@@ -69,6 +93,7 @@ export default function FujigokoPage() {
             selectedPlace={selectedPlace}
             systemPrompt={systemPrompt}
             initialMessages={[introMessage]}
+            onAIPinsExtracted={handleAIPinsExtracted}
           />
         </div>
       </div>
