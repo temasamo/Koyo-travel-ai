@@ -25,7 +25,7 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
       new Promise<void>((resolve, reject) => {
         if (window.google?.maps) return resolve();
         const s = document.createElement("script");
-        s.src = `https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}&libraries=marker,places&v=weekly`;
+        s.src = `https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}&libraries=marker,places,directions&v=weekly`;
         s.async = true;
         s.onload = () => resolve();
         s.onerror = () => reject(new Error("Google Maps failed to load"));
@@ -333,7 +333,10 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
 
         // ルートを描画（2点以上ある場合）
         if (geocodedPlaces.length >= 2) {
-          drawRoute(geocodedPlaces);
+          console.log("🛣️ ルート描画開始:", geocodedPlaces.length, "地点");
+          await drawRoute(geocodedPlaces);
+        } else {
+          console.log("❌ ルート描画スキップ: 地点数不足", geocodedPlaces.length);
         }
 
         // マーカーが追加された場合、地図の中心を調整
@@ -357,42 +360,70 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
   }, [map, isMapReady, locations]);
 
   // 🔹 Directions APIでルートを描く関数
-  const drawRoute = (geocodedPlaces: { name: string; location: google.maps.LatLng }[]) => {
+  const drawRoute = async (geocodedPlaces: { name: string; location: google.maps.LatLng }[]) => {
     if (!map) return;
 
-    const directionsService = new google.maps.DirectionsService();
-    const directionsRenderer = new google.maps.DirectionsRenderer({
-      map: map,
-      suppressMarkers: true, // マーカーは独自に出してるので抑制
-      preserveViewport: true,
-      polylineOptions: {
-        strokeColor: "#007BFF",
-        strokeWeight: 5,
-        strokeOpacity: 0.7,
-      },
-    });
+    try {
+      // Directions ライブラリを動的に読み込み
+      const { DirectionsService, DirectionsRenderer } = await google.maps.importLibrary("routes") as google.maps.RoutesLibrary;
 
-    const waypoints = geocodedPlaces.slice(1, -1).map((p) => ({
-      location: p.location,
-      stopover: true,
-    }));
+      const directionsService = new DirectionsService();
+      const directionsRenderer = new DirectionsRenderer({
+        map: map,
+        suppressMarkers: true, // マーカーは独自に出してるので抑制
+        preserveViewport: true,
+        polylineOptions: {
+          strokeColor: "#007BFF",
+          strokeWeight: 5,
+          strokeOpacity: 0.7,
+        },
+      });
 
-    directionsService.route(
-      {
+      const waypoints = geocodedPlaces.slice(1, -1).map((p) => ({
+        location: p.location,
+        stopover: true,
+      }));
+
+      // 経由地が多すぎる場合は制限（Google Maps APIの制限は23個まで）
+      const limitedWaypoints = waypoints.slice(0, 23);
+
+      console.log("🛣️ ルートリクエスト詳細:");
+      console.log("📍 出発地:", geocodedPlaces[0].name, geocodedPlaces[0].location.toString());
+      console.log("📍 到着地:", geocodedPlaces[geocodedPlaces.length - 1].name, geocodedPlaces[geocodedPlaces.length - 1].location.toString());
+      console.log("📍 経由地数:", limitedWaypoints.length);
+
+      const result = await directionsService.route({
         origin: geocodedPlaces[0].location,
         destination: geocodedPlaces[geocodedPlaces.length - 1].location,
-        waypoints,
+        waypoints: limitedWaypoints,
         travelMode: google.maps.TravelMode.DRIVING,
-      },
-      (result, status) => {
-        if (status === google.maps.DirectionsStatus.OK && result) {
-          directionsRenderer.setDirections(result);
-          routePolyline.current = directionsRenderer;
-        } else {
-          console.error("❌ ルート描画失敗:", status);
-        }
+        optimizeWaypoints: true, // 経由地の最適化
+      });
+
+      console.log("✅ ルート描画成功:", result);
+      directionsRenderer.setDirections(result);
+      routePolyline.current = directionsRenderer;
+
+    } catch (error) {
+      console.error("❌ Directions API エラー:", error);
+      
+      // フォールバック: シンプルなポリラインで接続
+      if (geocodedPlaces.length >= 2) {
+        console.log("🔄 フォールバック: シンプルな線で接続");
+        const { Polyline } = await google.maps.importLibrary("geometry") as google.maps.GeometryLibrary;
+        
+        const path = geocodedPlaces.map(p => p.location);
+        const polyline = new google.maps.Polyline({
+          path: path,
+          geodesic: true,
+          strokeColor: "#007BFF",
+          strokeOpacity: 0.7,
+          strokeWeight: 3,
+        });
+        polyline.setMap(map);
+        routePolyline.current = polyline as any;
       }
-    );
+    }
   };
 
   return <div ref={mapRef} style={{ width: "100%", height: "100vh" }} />;
