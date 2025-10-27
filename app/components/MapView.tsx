@@ -25,7 +25,7 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
       new Promise<void>((resolve, reject) => {
         if (window.google?.maps) return resolve();
         const s = document.createElement("script");
-        s.src = `https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}&libraries=marker,places,directions&v=weekly`;
+        s.src = `https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}&libraries=marker,places,routes&v=weekly`;
         s.async = true;
         s.onload = () => resolve();
         s.onerror = () => reject(new Error("Google Maps failed to load"));
