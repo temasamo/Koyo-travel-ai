@@ -199,39 +199,121 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
                 // 既存の吹き出しを全部閉じる
                 infoWindows.current.forEach(iw => iw.close());
 
-                // AI要約を取得して吹き出し更新
+                // 読み込み中表示
+                infoWindow.setContent(`
+                  <div style="min-width:200px; font-size:14px; text-align:center; padding:20px;">
+                    📍 情報を取得中...
+                  </div>
+                `);
+                infoWindow.open(map, marker);
+
                 try {
-                  const res = await fetch("/api/chat/summary", {
+                  // Step 1.5: Place詳細取得 & 情報マージ
+                  const placeId = place.id;
+                  if (!placeId) throw new Error("Place ID not found");
+
+                  // Google Places API詳細取得
+                  const detailRes = await fetch(`https://places.googleapis.com/v1/places/${placeId}?languageCode=ja&regionCode=JP`, {
+                    headers: {
+                      "X-Goog-Api-Key": String(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY),
+                      "X-Goog-FieldMask": [
+                        "displayName",
+                        "formattedAddress", 
+                        "rating",
+                        "userRatingCount",
+                        "photos",
+                        "websiteUri",
+                        "googleMapsUri"
+                      ].join(","),
+                    },
+                  });
+
+                  const placeDetails = await detailRes.json();
+                  console.log("📸 Place Details:", placeDetails);
+
+                  // AI要約を並行取得
+                  const summaryRes = await fetch("/api/chat/summary", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ place: place.displayName?.text || location.name }),
+                    body: JSON.stringify({ place: placeDetails.displayName?.text || location.name }),
                   });
-                  const data = await res.json();
+                  const summaryData = await summaryRes.json();
 
-                  infoWindow.setContent(`
-                    <div style="min-width:200px; font-size:14px;">
-                      <strong>${place.displayName?.text || location.name}</strong><br/>
-                      ${data.summary}
+                  // ✅ 写真URL生成
+                  let photoUrl = "";
+                  if (placeDetails.photos?.[0]?.name) {
+                    photoUrl = `https://places.googleapis.com/v1/${placeDetails.photos[0].name}/media?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}&maxWidthPx=400`;
+                  }
+
+                  // ✅ 評価HTML生成
+                  const ratingHtml = placeDetails.rating
+                    ? `⭐ ${placeDetails.rating}（${placeDetails.userRatingCount || 0}件）`
+                    : "⭐ N/A";
+
+                  // ✅ GoogleマップURL生成（place.googleMapsUriが優先、なければ検索URL）
+                  const mapsUrl = placeDetails.googleMapsUri
+                    ? placeDetails.googleMapsUri
+                    : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                        placeDetails.displayName?.text || location.name
+                      )}`;
+
+                  // ✅ 統合HTML生成
+                  const contentString = `
+                    <div style="max-width:320px; font-family:sans-serif;">
+                      ${
+                        photoUrl
+                          ? `<img src="${photoUrl}" alt="${placeDetails.displayName?.text || location.name}" style="width:100%;border-radius:8px;margin-bottom:8px;">`
+                          : ""
+                      }
+                      <h3 style="margin:4px 0; font-size:16px; font-weight:600;">${placeDetails.displayName?.text || location.name}</h3>
+                      <p style="margin:2px 0; color:#666; font-size:14px;">${ratingHtml}</p>
+                      <p style="margin:2px 0; color:#666; font-size:12px;">📍 ${placeDetails.formattedAddress || ""}</p>
+                      <hr style="margin:8px 0; border:none; border-top:1px solid #eee;">
+                      <p style="margin:4px 0; font-size:13px; line-height:1.4;">${summaryData.summary}</p>
+                      ${
+                        placeDetails.websiteUri
+                          ? `<a href="${placeDetails.websiteUri}" target="_blank" rel="noopener noreferrer" style="display:block;margin-top:8px;font-weight:500;color:#1a73e8;text-decoration:none;font-size:12px;">公式サイト</a>`
+                          : ""
+                      }
+                      <a href="${mapsUrl}" target="_blank" rel="noopener noreferrer" style="display:block;margin-top:4px;font-weight:500;color:#1a73e8;text-decoration:none;font-size:12px;">Googleマップで見る</a>
                     </div>
-                  `);
+                  `;
 
-                  infoWindow.open(map, marker);
+                  infoWindow.setContent(contentString);
 
                   // チャットにも通知
                   if (onPlaceClick) {
-                    onPlaceClick(place.displayName?.text || location.name);
+                    onPlaceClick(placeDetails.displayName?.text || location.name);
                   }
 
                   map.panTo(position);
                 } catch (error) {
-                  console.error("❌ AI要約取得エラー:", error);
-                  infoWindow.setContent(`
-                    <div style="min-width:200px; font-size:14px;">
-                      <strong>${place.displayName?.text || location.name}</strong><br/>
-                      説明を取得できませんでした。
-                    </div>
-                  `);
-                  infoWindow.open(map, marker);
+                  console.error("❌ 詳細情報取得エラー:", error);
+                  
+                  // フォールバック: AI要約のみ表示
+                  try {
+                    const fallbackRes = await fetch("/api/chat/summary", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ place: location.name }),
+                    });
+                    const fallbackData = await fallbackRes.json();
+
+                    infoWindow.setContent(`
+                      <div style="min-width:200px; font-size:14px;">
+                        <strong>${location.name}</strong><br/>
+                        ${fallbackData.summary}
+                      </div>
+                    `);
+                  } catch (fallbackError) {
+                    console.error("❌ フォールバック失敗:", fallbackError);
+                    infoWindow.setContent(`
+                      <div style="min-width:200px; font-size:14px;">
+                        <strong>${location.name}</strong><br/>
+                        説明を取得できませんでした。
+                      </div>
+                    `);
+                  }
                 }
               });
 
