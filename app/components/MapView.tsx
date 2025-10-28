@@ -563,28 +563,32 @@ export default function MapView({
     };
 
     // AIルート描画イベントリスナーを追加
-    const handleShowAIRoute = (event: CustomEvent) => {
+    const handleShowAIRoute = async (event: CustomEvent) => {
       const route = event.detail;
       console.log("🛣️ 受信したルート:", route);
       if (!route?.from || !route?.to) return;
 
+      console.log("🚗 経路描画リクエスト:", route.from, "→", route.to);
+
       if (map && isMapReady) {
-        const directionsService = new google.maps.DirectionsService();
-        directionsService.route(
-          {
+        try {
+          const directionsService = new google.maps.DirectionsService();
+
+          const result = await directionsService.route({
             origin: route.from,
             destination: route.to,
             travelMode: google.maps.TravelMode.DRIVING,
-          },
-          (result, status) => {
-            if (status === google.maps.DirectionsStatus.OK && routePolyline.current) {
-              routePolyline.current.setDirections(result);
-              console.log("🟢 ルート描画成功:", route.from, "→", route.to);
-            } else {
-              console.warn("⚠️ ルート描画失敗:", status);
-            }
+          });
+
+          if (result?.routes?.length && routePolyline.current) {
+            routePolyline.current.setDirections(result);
+            console.log("🟢 ルート描画成功:", route.from, "→", route.to);
+          } else {
+            console.warn("⚠️ Directions API結果なし:", result);
           }
-        );
+        } catch (error) {
+          console.error("❌ Directions APIエラー:", error);
+        }
       }
     };
 
