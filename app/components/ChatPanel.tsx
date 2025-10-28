@@ -28,6 +28,33 @@ interface ChatPanelProps {
   aiName?: string;
 }
 
+// AIレスポンスからJSONを検出・解析する関数
+const extractPinsFromResponse = (response: string): AIPin[] => {
+  try {
+    // JSONブロックを検出（```json または ``` で囲まれた部分）
+    const jsonBlockMatch = response.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+    if (jsonBlockMatch) {
+      const jsonString = jsonBlockMatch[1];
+      const parsed = JSON.parse(jsonString);
+      if (parsed?.pins && Array.isArray(parsed.pins)) {
+        return parsed.pins;
+      }
+    }
+    
+    // インラインJSONを検出
+    const jsonMatch = response.match(/\{[\s\S]*?"pins"[\s\S]*?\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (parsed?.pins && Array.isArray(parsed.pins)) {
+        return parsed.pins;
+      }
+    }
+  } catch (error) {
+    console.warn("JSON解析失敗:", error);
+  }
+  return [];
+};
+
 export default function ChatPanel({ onLocationsExtracted, selectedPlace, systemPrompt, initialMessages, onAIPinsExtracted, aiName = "旅AIプランナー" }: ChatPanelProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -114,9 +141,19 @@ export default function ChatPanel({ onLocationsExtracted, selectedPlace, systemP
         }
         setMessages((prev) => [...prev, { role: "assistant", content: data.response }]);
       } else {
-        // 従来のテキストレスポンス
-        console.log("📝 テキストレスポンス:", data.reply);
-        setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
+        // 従来のテキストレスポンスからJSONを検出・解析
+        const aiResponse = data.reply || "";
+        const extractedPins = extractPinsFromResponse(aiResponse);
+        
+        if (extractedPins.length > 0) {
+          console.log("🔍 レスポンスからAIピン検出:", extractedPins);
+          if (onAIPinsExtracted) {
+            onAIPinsExtracted(extractedPins);
+          }
+        }
+        
+        console.log("📝 テキストレスポンス:", aiResponse);
+        setMessages((prev) => [...prev, { role: "assistant", content: aiResponse }]);
       }
 
       // 地名抽出（従来のテキストレスポンスの場合のみ）
