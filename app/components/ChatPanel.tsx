@@ -31,26 +31,33 @@ interface ChatPanelProps {
 // AIレスポンスからJSONを検出・解析する関数
 const handleAIResponse = (message: string) => {
   try {
-    // コードブロック除去
+    // コードブロックを除去
     const clean = message.replace(/```json|```/g, "").trim();
 
-    // JSON部分のみ抽出（最初の { 〜 最後の }）
+    // JSON部分を検出
     const jsonMatch = clean.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      console.log("⚪ JSON未検出 → テキスト回答のみ");
-      return;
+
+    let displayText = clean; // 表示用テキスト
+
+    if (jsonMatch) {
+      // JSON文字列を解析
+      const parsed = JSON.parse(jsonMatch[0]);
+
+      // ピンがある場合は地図に送信
+      if (parsed?.pins?.length) {
+        console.log("🟢 AIピン抽出成功:", parsed.pins);
+        window.dispatchEvent(new CustomEvent("showAIPins", { detail: parsed.pins }));
+      }
+
+      // JSON部分をユーザー表示用テキストから削除
+      displayText = clean.replace(jsonMatch[0], "").trim();
     }
 
-    const parsed = JSON.parse(jsonMatch[0]);
+    return displayText; // JSON除外済みのテキストを返す
 
-    if (parsed?.pins?.length) {
-      console.log("🟢 AIピン抽出成功:", parsed.pins);
-      window.dispatchEvent(new CustomEvent("showAIPins", { detail: parsed.pins }));
-    } else {
-      console.log("⚪ pins配列なし");
-    }
   } catch (e) {
     console.warn("⚠️ JSON解析エラー:", e);
+    return message; // エラー時は元のメッセージを返す
   }
 };
 
@@ -142,10 +149,10 @@ export default function ChatPanel({ onLocationsExtracted, selectedPlace, systemP
       } else {
         // 従来のテキストレスポンスからJSONを検出・解析
         const aiResponse = data.reply || "";
-        handleAIResponse(aiResponse);
+        const displayText = handleAIResponse(aiResponse);
         
-        console.log("📝 テキストレスポンス:", aiResponse);
-        setMessages((prev) => [...prev, { role: "assistant", content: aiResponse }]);
+        console.log("📝 テキストレスポンス:", displayText);
+        setMessages((prev) => [...prev, { role: "assistant", content: displayText }]);
       }
 
       // 地名抽出（従来のテキストレスポンスの場合のみ）
