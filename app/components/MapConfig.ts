@@ -28,7 +28,10 @@ export const AREA_CONFIG: Record<
 };
 
 // 検索クエリにエリア名を自動補完する関数
-export function buildSearchQuery(raw: string, area: AreaKey): string {
+export function buildSearchQuery(raw: string, area?: AreaKey): string {
+  if (!area) {
+    return raw; // エリアが指定されていない場合はそのまま返す
+  }
   const suffix = AREA_CONFIG[area].defaultQuerySuffix;
   return raw.includes(suffix) ? raw : `${raw} ${suffix}`;
 }
