@@ -1,7 +1,7 @@
 "use client";
 import { useEffect } from "react";
-import MapView from "@/components/MapView";
-import ChatPanel from "@/components/ChatPanel";
+import MapView from "../components/MapView";
+import ChatPanel from "../components/ChatPanel";
 import { systemPrompt } from "./systemPrompt";
 
 export default function PlannerPage() {
