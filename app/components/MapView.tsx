@@ -562,10 +562,38 @@ export default function MapView({
       }
     };
 
+    // AIルート描画イベントリスナーを追加
+    const handleShowAIRoute = (event: CustomEvent) => {
+      const route = event.detail;
+      console.log("🛣️ 受信したルート:", route);
+      if (!route?.from || !route?.to) return;
+
+      if (map && isMapReady) {
+        const directionsService = new google.maps.DirectionsService();
+        directionsService.route(
+          {
+            origin: route.from,
+            destination: route.to,
+            travelMode: google.maps.TravelMode.DRIVING,
+          },
+          (result, status) => {
+            if (status === google.maps.DirectionsStatus.OK && routePolyline.current) {
+              routePolyline.current.setDirections(result);
+              console.log("🟢 ルート描画成功:", route.from, "→", route.to);
+            } else {
+              console.warn("⚠️ ルート描画失敗:", status);
+            }
+          }
+        );
+      }
+    };
+
     window.addEventListener("showAIPins", handleShowAIPins as EventListener);
+    window.addEventListener("showAIRoute", handleShowAIRoute as EventListener);
     
     return () => {
       window.removeEventListener("showAIPins", handleShowAIPins as EventListener);
+      window.removeEventListener("showAIRoute", handleShowAIRoute as EventListener);
     };
   }, [map, isMapReady]);
 

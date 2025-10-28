@@ -49,6 +49,12 @@ const handleAIResponse = (message: string) => {
         window.dispatchEvent(new CustomEvent("showAIPins", { detail: parsed.pins }));
       }
 
+      // ルートがある場合は地図に送信
+      if (parsed?.route?.from && parsed?.route?.to) {
+        console.log("🛣️ AIルート抽出成功:", parsed.route);
+        window.dispatchEvent(new CustomEvent("showAIRoute", { detail: parsed.route }));
+      }
+
       // JSON部分をユーザー表示用テキストから削除
       displayText = clean.replace(jsonMatch[0], "").trim();
     }
