@@ -536,9 +536,29 @@ export default function MapView({
   // showAIPinsイベントリスナーを追加
   useEffect(() => {
     const handleShowAIPins = (event: CustomEvent) => {
-      console.log("🔔 showAIPinsイベント受信:", event.detail);
-      if (map && isMapReady && event.detail?.length > 0) {
-        addAIMarkers(event.detail);
+      const pins = event.detail;
+      console.log("📍 受信したpins:", pins);
+      if (!pins?.length) return;
+
+      if (map && isMapReady) {
+        const service = new google.maps.places.PlacesService(map);
+        pins.forEach((p: AIPin) => {
+          const query = p.name + " 日本";
+          const request = { query, fields: ["geometry", "name"] };
+          service.findPlaceFromQuery(request, (results, status) => {
+            if (status === google.maps.places.PlacesServiceStatus.OK && results?.[0]) {
+              new google.maps.Marker({
+                map,
+                position: results[0].geometry?.location,
+                title: results[0].name,
+                icon: "http://maps.google.com/mapfiles/ms/icons/blue-dot.png",
+              });
+              console.log("✅ ピン表示:", results[0].name);
+            } else {
+              console.log("❌ ピン取得失敗:", query);
+            }
+          });
+        });
       }
     };
 

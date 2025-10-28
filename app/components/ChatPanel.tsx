@@ -32,27 +32,25 @@ interface ChatPanelProps {
 const handleAIResponse = (message: string) => {
   try {
     // コードブロック除去
-    const clean = message
-      .replace(/```json/g, "")
-      .replace(/```/g, "")
-      .trim();
+    const clean = message.replace(/```json|```/g, "").trim();
 
-    // JSON検出
-    const jsonStart = clean.indexOf("{");
-    if (jsonStart === -1) return;
+    // JSON部分のみ抽出（最初の { 〜 最後の }）
+    const jsonMatch = clean.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      console.log("⚪ JSON未検出 → テキスト回答のみ");
+      return;
+    }
 
-    const jsonString = clean.slice(jsonStart);
-    const parsed = JSON.parse(jsonString);
+    const parsed = JSON.parse(jsonMatch[0]);
 
-    // pinsが存在すればイベント発火
-    if (parsed?.pins?.length > 0) {
-      console.log("🟢 AIピン検出:", parsed.pins);
+    if (parsed?.pins?.length) {
+      console.log("🟢 AIピン抽出成功:", parsed.pins);
       window.dispatchEvent(new CustomEvent("showAIPins", { detail: parsed.pins }));
     } else {
       console.log("⚪ pins配列なし");
     }
   } catch (e) {
-    console.warn("JSON解析失敗:", e);
+    console.warn("⚠️ JSON解析エラー:", e);
   }
 };
 
