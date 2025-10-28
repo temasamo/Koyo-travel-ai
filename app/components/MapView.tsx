@@ -593,11 +593,11 @@ export default function MapView({
     };
 
     window.addEventListener("showAIPins", handleShowAIPins as EventListener);
-    window.addEventListener("showAIRoute", handleShowAIRoute as EventListener);
+    window.addEventListener("showAIRoute", handleShowAIRoute as any);
     
     return () => {
       window.removeEventListener("showAIPins", handleShowAIPins as EventListener);
-      window.removeEventListener("showAIRoute", handleShowAIRoute as EventListener);
+      window.removeEventListener("showAIRoute", handleShowAIRoute as any);
     };
   }, [map, isMapReady]);
 
