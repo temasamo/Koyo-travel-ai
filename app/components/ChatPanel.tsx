@@ -29,30 +29,31 @@ interface ChatPanelProps {
 }
 
 // AIレスポンスからJSONを検出・解析する関数
-const extractPinsFromResponse = (response: string): AIPin[] => {
+const handleAIResponse = (message: string) => {
   try {
-    // JSONブロックを検出（```json または ``` で囲まれた部分）
-    const jsonBlockMatch = response.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
-    if (jsonBlockMatch) {
-      const jsonString = jsonBlockMatch[1];
-      const parsed = JSON.parse(jsonString);
-      if (parsed?.pins && Array.isArray(parsed.pins)) {
-        return parsed.pins;
-      }
+    // コードブロック除去
+    const clean = message
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .trim();
+
+    // JSON検出
+    const jsonStart = clean.indexOf("{");
+    if (jsonStart === -1) return;
+
+    const jsonString = clean.slice(jsonStart);
+    const parsed = JSON.parse(jsonString);
+
+    // pinsが存在すればイベント発火
+    if (parsed?.pins?.length > 0) {
+      console.log("🟢 AIピン検出:", parsed.pins);
+      window.dispatchEvent(new CustomEvent("showAIPins", { detail: parsed.pins }));
+    } else {
+      console.log("⚪ pins配列なし");
     }
-    
-    // インラインJSONを検出
-    const jsonMatch = response.match(/\{[\s\S]*?"pins"[\s\S]*?\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      if (parsed?.pins && Array.isArray(parsed.pins)) {
-        return parsed.pins;
-      }
-    }
-  } catch (error) {
-    console.warn("JSON解析失敗:", error);
+  } catch (e) {
+    console.warn("JSON解析失敗:", e);
   }
-  return [];
 };
 
 export default function ChatPanel({ onLocationsExtracted, selectedPlace, systemPrompt, initialMessages, onAIPinsExtracted, aiName = "旅AIプランナー" }: ChatPanelProps) {
@@ -143,14 +144,7 @@ export default function ChatPanel({ onLocationsExtracted, selectedPlace, systemP
       } else {
         // 従来のテキストレスポンスからJSONを検出・解析
         const aiResponse = data.reply || "";
-        const extractedPins = extractPinsFromResponse(aiResponse);
-        
-        if (extractedPins.length > 0) {
-          console.log("🔍 レスポンスからAIピン検出:", extractedPins);
-          if (onAIPinsExtracted) {
-            onAIPinsExtracted(extractedPins);
-          }
-        }
+        handleAIResponse(aiResponse);
         
         console.log("📝 テキストレスポンス:", aiResponse);
         setMessages((prev) => [...prev, { role: "assistant", content: aiResponse }]);

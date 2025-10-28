@@ -533,5 +533,21 @@ export default function MapView({
     }
   }, [aiPins, map, isMapReady]);
 
+  // showAIPinsイベントリスナーを追加
+  useEffect(() => {
+    const handleShowAIPins = (event: CustomEvent) => {
+      console.log("🔔 showAIPinsイベント受信:", event.detail);
+      if (map && isMapReady && event.detail?.length > 0) {
+        addAIMarkers(event.detail);
+      }
+    };
+
+    window.addEventListener("showAIPins", handleShowAIPins as EventListener);
+    
+    return () => {
+      window.removeEventListener("showAIPins", handleShowAIPins as EventListener);
+    };
+  }, [map, isMapReady]);
+
   return <div ref={mapRef} style={{ width: "100%", height: "100vh" }} />;
 }
