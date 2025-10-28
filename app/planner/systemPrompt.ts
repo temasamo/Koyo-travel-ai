@@ -10,7 +10,7 @@ export const systemPrompt = `
 【出力フォーマット例】
 ---
 おすすめのスポットをいくつかご紹介します！
-```json
+\`\`\`json
 {
   "response": "おすすめの観光地を見つけました！",
   "pins": [
@@ -18,7 +18,7 @@ export const systemPrompt = `
     { "name": "清水寺", "type": "ai" }
   ]
 }
-```
+\`\`\`
 
 【重要】
 - JSONは常に有効な構文で出力する（マークダウン形式OK）
