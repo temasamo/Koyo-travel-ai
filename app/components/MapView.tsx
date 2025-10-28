@@ -63,6 +63,19 @@ export default function MapView({
       });
       setMap(mapInstance);
       setIsMapReady(true);
+      
+      // DirectionsRendererを初期化
+      routePolyline.current = new google.maps.DirectionsRenderer({
+        map: mapInstance,
+        suppressMarkers: true, // マーカーは独自に出してるので抑制
+        preserveViewport: true,
+        polylineOptions: {
+          strokeColor: "#007BFF",
+          strokeWeight: 5,
+          strokeOpacity: 0.7,
+        },
+      });
+      
       console.log("✅ Map initialized successfully");
 
       // 🧩 固定ピン表示処理（一時停止）
@@ -566,9 +579,14 @@ export default function MapView({
     const handleShowAIRoute = async (event: CustomEvent) => {
       const route = event.detail;
       console.log("🛣️ 受信したルート:", route);
-      if (!route?.from || !route?.to) return;
+      console.log("🛣️ ルート詳細:", { from: route?.from, to: route?.to });
+      if (!route?.from || !route?.to) {
+        console.warn("⚠️ ルート情報が不完全:", route);
+        return;
+      }
 
       console.log("🚗 経路描画リクエスト:", route.from, "→", route.to);
+      console.log("🚗 マップ状態:", { map: !!map, isMapReady, routePolyline: !!routePolyline.current });
 
       if (map && isMapReady) {
         try {
@@ -580,6 +598,8 @@ export default function MapView({
             travelMode: google.maps.TravelMode.DRIVING,
           });
 
+          console.log("🚗 Directions API結果:", result);
+
           if (result?.routes?.length && routePolyline.current) {
             routePolyline.current.setDirections(result);
             console.log("🟢 ルート描画成功:", route.from, "→", route.to);
@@ -589,6 +609,8 @@ export default function MapView({
         } catch (error) {
           console.error("❌ Directions APIエラー:", error);
         }
+      } else {
+        console.warn("⚠️ マップが準備できていません:", { map: !!map, isMapReady });
       }
     };
 
