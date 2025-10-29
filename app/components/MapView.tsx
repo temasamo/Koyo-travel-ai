@@ -242,10 +242,15 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
                   // GoogleマップURLを生成（placeIdから安全に）
                   const gmUrl = `https://www.google.com/maps/place/?q=place_id:${place.id}`;
                   
-                  // websiteは要求しないので、存在すれば使用（型安全のためany経由）
-                  const website = (details.place as any).website && typeof (details.place as any).website === "string"
-                    ? (details.place as any).website
-                    : null;
+                  // REST API経由でwebsiteを安全に取得
+                  let website = null;
+                  try {
+                    const websiteRes = await fetch(`/api/places/details?placeId=${place.id}`);
+                    const websiteData = await websiteRes.json();
+                    website = websiteData.website || null;
+                  } catch (error) {
+                    console.warn(`⚠️ Website fetch failed for ${place.id}:`, error);
+                  }
 
                   const content = `
                     <div style="max-width: 320px; font-family: system-ui, -apple-system, sans-serif;">
