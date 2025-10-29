@@ -19,7 +19,7 @@ interface ChatPanelProps {
 
 export default function ChatPanel({ onLocationsExtracted, selectedPlace }: ChatPanelProps) {
   const [messages, setMessages] = useState<{ role: string; content: string }[]>([
-    { role: "assistant", content: "こんにちは！旅アドバイザーAIです。どちらから出発されますか？" },
+    { role: "assistant", content: "こんにちは！上山旅コンシェルジュです。どちらから出発されますか？" },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
