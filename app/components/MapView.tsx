@@ -239,6 +239,14 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
                     ? details.place.photos[0].getURI({ maxWidth: 300 })
                     : null;
 
+                  // GoogleマップURLを生成（placeIdから安全に）
+                  const gmUrl = `https://www.google.com/maps/place/?q=place_id:${place.id}`;
+                  
+                  // websiteは要求しないので、存在すれば使用（型安全のためany経由）
+                  const website = (details.place as any).website && typeof (details.place as any).website === "string"
+                    ? (details.place as any).website
+                    : null;
+
                   const content = `
                     <div style="max-width: 320px; font-family: system-ui, -apple-system, sans-serif;">
                       ${photoUrl ? `
@@ -264,13 +272,13 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
                         ${data.summary}
                       </p>
                       <div style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap;">
-                        <button onclick="window.openCustomPanel('${place.id}')" 
-                                style="padding: 4px 8px; background-color: #10b981; color: white; border: none; 
-                                       border-radius: 4px; font-size: 12px; font-weight: 500; cursor: pointer;">
-                          詳細を見る
-                        </button>
-                        ${details.place.websiteURI ? `
-                          <a href="${details.place.websiteURI}" target="_blank" 
+                        <a href="${gmUrl}" target="_blank" rel="noopener noreferrer"
+                           style="display: inline-block; padding: 4px 8px; background-color: #10b981; 
+                                  color: white; text-decoration: none; border-radius: 4px; font-size: 12px; font-weight: 500;">
+                          Googleマップで見る
+                        </a>
+                        ${website ? `
+                          <a href="${website}" target="_blank" rel="noopener noreferrer"
                              style="display: inline-block; padding: 4px 8px; background-color: #3b82f6; 
                                     color: white; text-decoration: none; border-radius: 4px; font-size: 12px; font-weight: 500;">
                             公式サイト
@@ -340,9 +348,9 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
 
         setMarkers(newMarkers);
 
-        // ルートを描画（2点以上ある場合）
-        if (geocodedPlaces.length >= 2) {
-          drawRoute(geocodedPlaces);
+        // ルートを描画（古窯旅館から各地点への個別ルート）
+        if (geocodedPlaces.length >= 1) {
+          drawIndividualRoutes(geocodedPlaces);
         }
 
         // マーカーが追加された場合、地図の中心を調整
@@ -365,43 +373,65 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
     addLocationMarkersAndRoute();
   }, [map, isMapReady, locations]);
 
-  // 🔹 Directions APIでルートを描く関数
-  const drawRoute = (geocodedPlaces: { name: string; location: google.maps.LatLng }[]) => {
+  // 🔹 古窯旅館から各地点への個別ルートを描く関数
+  const drawIndividualRoutes = (geocodedPlaces: { name: string; location: google.maps.LatLng }[]) => {
     if (!map) return;
 
+    // 古窯旅館の座標（固定）
+    const defaultOrigin = { lat: 38.1435, lng: 140.2734 };
+    const originLatLng = new google.maps.LatLng(defaultOrigin.lat, defaultOrigin.lng);
+
     const directionsService = new google.maps.DirectionsService();
-    const directionsRenderer = new google.maps.DirectionsRenderer({
-      map: map,
-      suppressMarkers: true, // マーカーは独自に出してるので抑制
-      preserveViewport: true,
-      polylineOptions: {
-        strokeColor: "#007BFF",
-        strokeWeight: 5,
-        strokeOpacity: 0.7,
-      },
-    });
+    
+    // 既存のルートをクリア
+    if (routePolyline.current) {
+      routePolyline.current.setMap(null);
+    }
 
-    const waypoints = geocodedPlaces.slice(1, -1).map((p) => ({
-      location: p.location,
-      stopover: true,
-    }));
-
-    directionsService.route(
-      {
-        origin: geocodedPlaces[0].location,
-        destination: geocodedPlaces[geocodedPlaces.length - 1].location,
-        waypoints,
-        travelMode: google.maps.TravelMode.DRIVING,
-      },
-      (result, status) => {
-        if (status === google.maps.DirectionsStatus.OK && result) {
-          directionsRenderer.setDirections(result);
-          routePolyline.current = directionsRenderer;
-        } else {
-          console.error("❌ ルート描画失敗:", status);
-        }
+    // 各地点への個別ルートを描画
+    geocodedPlaces.forEach((place, index) => {
+      try {
+        directionsService.route(
+          {
+            origin: originLatLng,
+            destination: place.location,
+            travelMode: google.maps.TravelMode.DRIVING,
+          },
+          (result, status) => {
+            if (status === google.maps.DirectionsStatus.OK && result) {
+              console.log(`✅ ルート描画成功: 古窯旅館 → ${place.name}`);
+              
+              const directionsRenderer = new google.maps.DirectionsRenderer({
+                map: map,
+                suppressMarkers: true,
+                preserveViewport: true,
+                polylineOptions: {
+                  strokeColor: "#007BFF",
+                  strokeWeight: 3,
+                  strokeOpacity: 0.6,
+                },
+              });
+              
+              directionsRenderer.setDirections(result);
+              
+              // 最初のルートのみをメインとして保存
+              if (index === 0) {
+                routePolyline.current = directionsRenderer;
+              }
+            } else {
+              console.warn(`⚠️ ルート描画失敗: 古窯旅館 → ${place.name} (${status})`);
+              
+              // ZERO_RESULTSの場合は詳細ログ
+              if (status === google.maps.DirectionsStatus.ZERO_RESULTS) {
+                console.warn(`🚫 ZERO_RESULTS: 古窯旅館から${place.name}へのルートが見つかりません`);
+              }
+            }
+          }
+        );
+      } catch (error) {
+        console.error(`❌ Directions error for ${place.name}:`, error);
       }
-    );
+    });
   };
 
   return (
