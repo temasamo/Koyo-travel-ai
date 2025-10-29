@@ -52,3 +52,46 @@ export function extractTimeFromText(userInput: string): string | null {
   // 指定がない場合はnullを返し、AIやAPI側で補完
   return null;
 }
+
+// Phase 5.2: ユーザーの時間意図を解析してモード判定
+import type { PlanMode } from "@/types/plan";
+
+export function analyzeUserTimeIntent(userInput: string): {
+  inferredTime: string | null;
+  mode: PlanMode;
+} {
+  if (!userInput) return { inferredTime: null, mode: "ask" };
+
+  const lower = userInput; // 日本語なのでlower不要だが将来拡張用
+  const now = new Date();
+
+  // 即時行動モード
+  if (lower.includes("これから") || lower.includes("今から")) {
+    return { inferredTime: now.toISOString(), mode: "instant" };
+  }
+
+  // 「今日」→午後15時想定
+  if (lower.includes("今日")) {
+    const today = new Date();
+    today.setHours(15, 0, 0, 0);
+    return { inferredTime: today.toISOString(), mode: "normal" };
+  }
+
+  // 明日
+  if (lower.includes("明日")) {
+    const tomorrow = new Date(Date.now() + 86400000);
+    tomorrow.setHours(10, 0, 0, 0);
+    return { inferredTime: tomorrow.toISOString(), mode: "normal" };
+  }
+
+  // 午前／午後／夜
+  if (lower.includes("午前"))
+    return { inferredTime: new Date(new Date().setHours(9, 0, 0, 0)).toISOString(), mode: "normal" };
+  if (lower.includes("午後"))
+    return { inferredTime: new Date(new Date().setHours(15, 0, 0, 0)).toISOString(), mode: "normal" };
+  if (lower.includes("夜"))
+    return { inferredTime: new Date(new Date().setHours(19, 0, 0, 0)).toISOString(), mode: "normal" };
+
+  // 曖昧すぎる場合 → AI確認モード
+  return { inferredTime: null, mode: "ask" };
+}

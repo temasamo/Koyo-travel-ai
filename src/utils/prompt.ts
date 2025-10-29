@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { formatTime } from "./time";
+import type { PlanMode } from "@/types/plan";
 
 /**
  * 旅行プランのプロンプトを構築
@@ -13,21 +14,38 @@ export function buildTravelPlanPrompt(
   origin: any,
   inferredTime: string,
   enrichedPlaces: any[],
-  userInput: string
+  userInput: string,
+  mode: PlanMode
 ): string {
-  return `
+  const basePrompt = `
 あなたは「${origin.name}」専属の旅プランナーAIです。
-ユーザーの入力: 「${userInput || "時間未指定"}」
+ユーザー入力: 「${userInput || "時間未指定"}」
+現在時刻: ${formatTime(new Date(inferredTime))}
 
-現在時刻は ${formatTime(new Date(inferredTime))} です。
-ただし、ユーザーが具体的な出発時間を指定していない場合は、
-「午後（15:00〜）」を仮定して提案してください。
-
-徒歩圏内（3km以内）で午後におすすめの観光スポットを3〜5件提案し、
-RAG情報（スタッフおすすめ等）がある場合は優先してください。
-
-利用可能な観光スポット:
 ${JSON.stringify(enrichedPlaces, null, 2)}
+`;
+
+  if (mode === "ask") {
+    return `
+${basePrompt}
+ユーザーの入力から出発時刻が特定できません。
+「午前」「午後」「夜」「今から」などを尋ねて、希望時間帯を確認してください。
+まだプランを提案しないでください。
+`;
+  }
+
+  if (mode === "instant") {
+    return `
+${basePrompt}
+ユーザーは「今から」または「これから」と入力しています。
+${origin.name}から徒歩圏（3km以内）で、約2〜3時間で楽しめる短時間プランを3件提案してください。
+飲食・温泉・軽い観光などを中心にしてください。
+`;
+  }
+
+  return `
+${basePrompt}
+通常の観光プランを提案してください。午前なら遠出、午後なら近場中心にしてください。
 `;
 }
 
