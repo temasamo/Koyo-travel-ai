@@ -230,7 +230,7 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
                   const res = await fetch("/api/chat/summary", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ place: details.place.displayName?.text || location.name }),
+                    body: JSON.stringify({ place: details.place.displayName || location.name }),
                   });
                   const data = await res.json();
 
@@ -242,7 +242,7 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
                   const content = `
                     <div style="max-width: 320px; font-family: system-ui, -apple-system, sans-serif;">
                       ${photoUrl ? `
-                        <img src="${photoUrl}" alt="${details.place.displayName?.text || location.name}" 
+                        <img src="${photoUrl}" alt="${details.place.displayName || location.name}" 
                              style="width: 100%; aspect-ratio: 16/9; border-radius: 8px; margin-bottom: 8px; object-fit: cover;" />
                       ` : `
                         <div style="width: 100%; aspect-ratio: 16/9; background-color: #f3f4f6; border-radius: 8px; margin-bottom: 8px; 
@@ -251,10 +251,10 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
                         </div>
                       `}
                       <h3 style="margin: 0 0 8px 0; font-size: 16px; font-weight: bold; color: #1f2937;">
-                        ${details.place.displayName?.text || location.name}
+                        ${details.place.displayName || location.name}
                       </h3>
                       <p style="margin: 0 0 6px 0; font-size: 13px; color: #6b7280;">
-                        ${details.place.formattedAddress?.text || "住所情報なし"}
+                        ${details.place.formattedAddress || "住所情報なし"}
                       </p>
                       <p style="margin: 0 0 8px 0; font-size: 13px; color: #f59e0b;">
                         ⭐ ${details.place.rating ? details.place.rating.toFixed(1) : "評価なし"}
@@ -285,7 +285,7 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
 
                   // チャットにも通知
                   if (onPlaceClick) {
-                    onPlaceClick(details.place.displayName?.text || location.name);
+                    onPlaceClick(details.place.displayName || location.name);
                   }
 
                   map.panTo(position);
