@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import CustomInfoPanel from "./CustomInfoPanel";
 
 interface Location {
   name: string;
@@ -19,6 +20,14 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
   const [isMapReady, setIsMapReady] = useState(false);
   const routePolyline = useRef<google.maps.DirectionsRenderer | null>(null);
   const infoWindows = useRef<google.maps.InfoWindow[]>([]);
+  const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
+
+  // グローバル関数を設定（CustomInfoPanel用）
+  useEffect(() => {
+    (window as any).openCustomPanel = (placeId: string) => {
+      setSelectedPlaceId(placeId);
+    };
+  }, []);
 
   useEffect(() => {
     const loadGoogleMaps = () =>
@@ -160,7 +169,15 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
         const newMarkers: google.maps.marker.AdvancedMarkerElement[] = [];
         const geocodedPlaces: { name: string; location: google.maps.LatLng }[] = [];
 
-        for (const location of locations) {
+        // Quota管理: テスト用の地点制限
+        const testPlaces = process.env.NEXT_PUBLIC_TEST_PLACES?.split(",") ?? [];
+        const filteredLocations = testPlaces.length > 0 
+          ? locations.filter(loc => testPlaces.includes(loc.name))
+          : locations;
+
+        console.log(`📍 処理対象地点: ${filteredLocations.length}件 (制限: ${testPlaces.length > 0 ? testPlaces.join(", ") : "なし"})`);
+
+        for (const location of filteredLocations) {
           try {
             // 地名で検索
             const searchRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
@@ -199,36 +216,110 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
                 // 既存の吹き出しを全部閉じる
                 infoWindows.current.forEach(iw => iw.close());
 
-                // AI要約を取得して吹き出し更新
                 try {
+                  // Step 1: Google Places詳細情報を取得
+                  const { Place } = (await google.maps.importLibrary("places")) as google.maps.PlacesLibrary;
+                  const placeDetails = new Place({
+                    id: place.id,
+                  });
+
+                  const fields = ["displayName", "formattedAddress", "rating", "userRatingCount", "photos", "websiteURI"];
+                  const details = await placeDetails.fetchFields({ fields });
+
+                  // AI要約を取得
                   const res = await fetch("/api/chat/summary", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ place: place.displayName?.text || location.name }),
+                    body: JSON.stringify({ place: details.place.displayName?.text || location.name }),
                   });
                   const data = await res.json();
 
-                  infoWindow.setContent(`
-                    <div style="min-width:200px; font-size:14px;">
-                      <strong>${place.displayName?.text || location.name}</strong><br/>
-                      ${data.summary}
-                    </div>
-                  `);
+                  // Step 2: 画像を含むInfoWindowコンテンツ
+                  const photoUrl = details.place.photos && details.place.photos.length > 0
+                    ? details.place.photos[0].getURI({ maxWidth: 300 })
+                    : null;
 
+                  const content = `
+                    <div style="max-width: 320px; font-family: system-ui, -apple-system, sans-serif;">
+                      ${photoUrl ? `
+                        <img src="${photoUrl}" alt="${details.place.displayName?.text || location.name}" 
+                             style="width: 100%; aspect-ratio: 16/9; border-radius: 8px; margin-bottom: 8px; object-fit: cover;" />
+                      ` : `
+                        <div style="width: 100%; aspect-ratio: 16/9; background-color: #f3f4f6; border-radius: 8px; margin-bottom: 8px; 
+                                    display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 12px;">
+                          画像なし
+                        </div>
+                      `}
+                      <h3 style="margin: 0 0 8px 0; font-size: 16px; font-weight: bold; color: #1f2937;">
+                        ${details.place.displayName?.text || location.name}
+                      </h3>
+                      <p style="margin: 0 0 6px 0; font-size: 13px; color: #6b7280;">
+                        ${details.place.formattedAddress?.text || "住所情報なし"}
+                      </p>
+                      <p style="margin: 0 0 8px 0; font-size: 13px; color: #f59e0b;">
+                        ⭐ ${details.place.rating ? details.place.rating.toFixed(1) : "評価なし"}
+                        ${details.place.userRatingCount ? `(${details.place.userRatingCount}件)` : ""}
+                      </p>
+                      <p style="margin: 0 0 8px 0; font-size: 13px; color: #374151; line-height: 1.4;">
+                        ${data.summary}
+                      </p>
+                      <div style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap;">
+                        <button onclick="window.openCustomPanel('${place.id}')" 
+                                style="padding: 4px 8px; background-color: #10b981; color: white; border: none; 
+                                       border-radius: 4px; font-size: 12px; font-weight: 500; cursor: pointer;">
+                          詳細を見る
+                        </button>
+                        ${details.place.websiteURI ? `
+                          <a href="${details.place.websiteURI}" target="_blank" 
+                             style="display: inline-block; padding: 4px 8px; background-color: #3b82f6; 
+                                    color: white; text-decoration: none; border-radius: 4px; font-size: 12px; font-weight: 500;">
+                            公式サイト
+                          </a>
+                        ` : ""}
+                      </div>
+                    </div>
+                  `;
+
+                  infoWindow.setContent(content);
                   infoWindow.open(map, marker);
 
                   // チャットにも通知
                   if (onPlaceClick) {
-                    onPlaceClick(place.displayName?.text || location.name);
+                    onPlaceClick(details.place.displayName?.text || location.name);
                   }
 
                   map.panTo(position);
                 } catch (error) {
-                  console.error("❌ AI要約取得エラー:", error);
+                  console.error("❌ 詳細情報取得エラー:", error);
+                  
+                  // エラーの種類に応じた詳細なメッセージ
+                  let errorMessage = "情報を取得できませんでした";
+                  if (error instanceof Error) {
+                    if (error.message.includes("QUOTA_EXCEEDED")) {
+                      errorMessage = "⚠️ API使用制限に達しました。しばらく待ってから再試行してください。";
+                    } else if (error.message.includes("REQUEST_DENIED")) {
+                      errorMessage = "⚠️ APIリクエストが拒否されました。APIキーを確認してください。";
+                    } else if (error.message.includes("INVALID_REQUEST")) {
+                      errorMessage = "⚠️ 無効なリクエストです。地点情報を確認してください。";
+                    } else if (error.message.includes("NOT_FOUND")) {
+                      errorMessage = "⚠️ 地点が見つかりませんでした。";
+                    } else {
+                      errorMessage = `⚠️ 通信エラー: ${error.message}`;
+                    }
+                  }
+                  
+                  // エラー時のフォールバック表示
                   infoWindow.setContent(`
-                    <div style="min-width:200px; font-size:14px;">
-                      <strong>${place.displayName?.text || location.name}</strong><br/>
-                      説明を取得できませんでした。
+                    <div style="max-width: 320px; font-family: system-ui, -apple-system, sans-serif;">
+                      <h3 style="margin: 0 0 8px 0; font-size: 16px; font-weight: bold; color: #1f2937;">
+                        ${place.displayName?.text || location.name}
+                      </h3>
+                      <p style="margin: 0 0 8px 0; font-size: 13px; color: #ef4444;">
+                        ${errorMessage}
+                      </p>
+                      <p style="margin: 0; font-size: 12px; color: #6b7280;">
+                        基本情報のみ表示しています
+                      </p>
                     </div>
                   `);
                   infoWindow.open(map, marker);
@@ -313,5 +404,15 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
     );
   };
 
-  return <div ref={mapRef} style={{ width: "100%", height: "100vh" }} />;
+  return (
+    <div style={{ position: "relative", width: "100%", height: "100vh" }}>
+      <div ref={mapRef} style={{ width: "100%", height: "100vh" }} />
+      {selectedPlaceId && (
+        <CustomInfoPanel 
+          placeId={selectedPlaceId} 
+          onClose={() => setSelectedPlaceId(null)} 
+        />
+      )}
+    </div>
+  );
 }
