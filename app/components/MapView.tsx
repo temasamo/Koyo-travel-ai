@@ -22,7 +22,7 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
 }
 
 function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
-  const { planMessage, origin, lodging } = usePlanStore();
+  const { planMessage, origin, lodging, selectedCategories, setSelectedCategories } = usePlanStore();
   if (typeof window !== "undefined" && (!window.google || !(window as any).google.maps)) {
     console.warn("Google Maps not ready yet.");
     // 初期ロード時はスクリプト読み込みで復帰する
@@ -98,10 +98,26 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
     extract();
   }, [planMessage, isMapReady]);
 
+  // カテゴリマッチャ
+  const matchCategory = (name: string, category: string) => {
+    const n = name || "";
+    if (category === "歴史") return /(城|寺|神社|史跡)/.test(n);
+    if (category === "自然") return /(公園|滝|湖|展望|蔵王|お釜|峡|岳|山)/.test(n);
+    if (category === "遊ぶ") return /(ロープウェイ|体験|スキー|遊園|アクティビティ|スノー)/.test(n);
+    if (category === "食べる") return /(食|レストラン|カフェ|そば|郷土|食堂)/.test(n);
+    return true;
+  };
+
   // 地名に基づいてピンを追加し、ルートを描画する機能
   useEffect(() => {
     console.log("🔍 MapView useEffect - map:", !!map, "isMapReady:", isMapReady, "locations:", locations);
-    const effectiveLocations = locations.length > 0 ? locations : extractedFromPlan;
+    let effectiveLocations = locations.length > 0 ? locations : extractedFromPlan;
+    // カテゴリフィルタ（選択がある場合のみ）
+    if (selectedCategories && selectedCategories.length > 0) {
+      effectiveLocations = effectiveLocations.filter((loc) =>
+        selectedCategories.some((c) => matchCategory(loc.name, c))
+      );
+    }
     if (!map || !isMapReady || effectiveLocations.length === 0) return;
 
     const addLocationMarkersAndRoute = async () => {
@@ -183,11 +199,27 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
 
         if (place?.location) {
           const position = new google.maps.LatLng(place.location.latitude, place.location.longitude);
-          
+          // 番号バッジ付きマーカー（解決順 1..n）
+          const order = resolved.length + 1;
+          const badge = document.createElement("div");
+          badge.style.display = "flex";
+          badge.style.alignItems = "center";
+          badge.style.justifyContent = "center";
+          badge.style.width = "28px";
+          badge.style.height = "28px";
+          badge.style.borderRadius = "9999px";
+          badge.style.background = "#EF4444";
+          badge.style.color = "#fff";
+          badge.style.fontSize = "12px";
+          badge.style.fontWeight = "700";
+          badge.style.boxShadow = "0 1px 6px rgba(0,0,0,.25)";
+          badge.textContent = String(order);
+
           const marker = new AdvancedMarkerElement({
             map,
             position,
             title: place.displayName?.text || query,
+            content: badge,
           });
 
           // 画像・レーティング対応のInfoWindow
@@ -376,9 +408,39 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
     }
   };
 
+  const toggleCategory = (cat: string) => {
+    const set = new Set(selectedCategories || []);
+    if (set.has(cat)) set.delete(cat); else set.add(cat);
+    setSelectedCategories(Array.from(set));
+  };
+
+  const chip = (label: string) => (
+    <button
+      key={label}
+      onClick={() => toggleCategory(label)}
+      style={{
+        padding: "6px 10px",
+        borderRadius: 9999,
+        border: "1px solid #e5e7eb",
+        background: selectedCategories?.includes(label) ? "#111827" : "#ffffff",
+        color: selectedCategories?.includes(label) ? "#ffffff" : "#111827",
+        fontSize: 12,
+      }}
+    >
+      {label}
+    </button>
+  );
+
   return (
     <div style={{ position: "relative", width: "100%", height: "100vh" }}>
       <div ref={mapRef} style={{ width: "100%", height: "100vh" }} />
+      {/* カテゴリチップ（左上） */}
+      <div style={{ position: "absolute", top: 12, left: 12, display: "flex", gap: 8, zIndex: 2 }}>
+        {chip("歴史")}
+        {chip("自然")}
+        {chip("遊ぶ")}
+        {chip("食べる")}
+      </div>
       {selectedPlaceId && (
         <CustomInfoPanel 
           placeId={selectedPlaceId} 
