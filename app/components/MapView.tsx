@@ -32,6 +32,10 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
   const [markers, setMarkers] = useState<google.maps.marker.AdvancedMarkerElement[]>([]);
   const [isMapReady, setIsMapReady] = useState(false);
   const routePolyline = useRef<google.maps.DirectionsRenderer | null>(null);
+  const [routeLegs, setRouteLegs] = useState<google.maps.DirectionsLeg[]>([]);
+  const [routePointNames, setRoutePointNames] = useState<string[]>([]);
+  // 初期レンダリング時には google は未定義のため、プレーン文字列で管理
+  const [travelMode, setTravelMode] = useState<'DRIVING' | 'WALKING' | 'TRANSIT'>('DRIVING');
   const infoWindows = useRef<google.maps.InfoWindow[]>([]);
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
   const [extractedFromPlan, setExtractedFromPlan] = useState<Location[]>([]);
@@ -98,6 +102,42 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
     extract();
   }, [planMessage, isMapReady]);
 
+  // カテゴリ選択時、表示対象がなくなる場合はPlaces検索で補完
+  useEffect(() => {
+    const runCategorySearch = async () => {
+      if (!isMapReady || !selectedCategories || selectedCategories.length === 0) return;
+      const effective = locations.length > 0 ? locations : extractedFromPlan;
+      const filtered = effective.filter((loc) => selectedCategories.some((c) => matchCategory(loc.name, c)));
+      if (filtered.length > 0) return; // 既存データで足りている
+
+      try {
+        const cat = selectedCategories[0];
+        const keyword = cat === '歴史' ? '城 寺 神社 史跡' : cat === '自然' ? '公園 滝 湖 展望' : cat === '遊ぶ' ? '体験 ロープウェイ アクティビティ' : '郷土料理 レストラン カフェ';
+        const textQuery = `上山市 ${keyword}`;
+        const res = await fetch('https://places.googleapis.com/v1/places:searchText', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': String(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY),
+            'X-Goog-FieldMask': 'places.id,places.displayName,places.location,places.rating,places.userRatingCount',
+          },
+          body: JSON.stringify({ textQuery, languageCode: 'ja', regionCode: 'JP' }),
+        });
+        const data = await res.json();
+        const locs: Location[] = (data.places || []).slice(0, 8).map((p: any) => ({
+          name: p.displayName?.text ?? 'スポット',
+          type: 'attraction',
+          confidence: 0.9, // Placesでヒットしたので高めに
+        }));
+        if (locs.length > 0) setExtractedFromPlan(locs);
+      } catch (e) {
+        console.warn('category search failed', e);
+      }
+    };
+    runCategorySearch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCategories, isMapReady]);
+
   // カテゴリマッチャ
   const matchCategory = (name: string, category: string) => {
     const n = name || "";
@@ -143,6 +183,7 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
           routePolyline.current.setMap(null);
           routePolyline.current = null;
         }
+        setRouteLegs([]);
 
         // フィルタリング適用（必ず1件以上になる）
         const candidates = filterPlacesByConfidence(effectiveLocations as any);
@@ -351,14 +392,17 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
 
     // 1地点のみの場合は直接ルート
     if (limitedPoints.length === 1 && !lodging && !origin) {
+      // 名前リスト（出発→目的地）
+      setRoutePointNames(["古窯旅館", limitedPoints[0].name]);
       directionsService.route({
         origin: DEFAULT_ORIGIN,
         destination: { lat: limitedPoints[0].lat, lng: limitedPoints[0].lng },
-        travelMode: google.maps.TravelMode.DRIVING,
+        travelMode: travelMode as any,
       }, (result, status) => {
         if (status === "OK" && result) {
           directionsRenderer.setDirections(result);
           routePolyline.current = directionsRenderer;
+          setRouteLegs(result.routes?.[0]?.legs ?? []);
           console.log("✅ ルート描画成功（1地点）");
         } else {
           console.warn("⚠️ ルート描画失敗（1地点）:", status);
@@ -370,6 +414,10 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
         location: { lat: p.lat, lng: p.lng }, 
         stopover: true 
       }));
+      // 名前リスト（出発→経由→目的地）
+      const startName = (origin && origin.trim().length > 0) ? origin : "古窯旅館";
+      const destName = (lodging && lodging.trim().length > 0) ? lodging : limitedPoints[limitedPoints.length - 1].name;
+      setRoutePointNames([startName, ...limitedPoints.slice(0, -1).map(p => p.name), destName]);
 
       directionsService.route({
         origin: (origin && origin.trim().length > 0) ? origin : DEFAULT_ORIGIN,
@@ -377,12 +425,13 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
           ? lodging
           : { lat: limitedPoints[limitedPoints.length - 1].lat, lng: limitedPoints[limitedPoints.length - 1].lng },
         waypoints,
-        travelMode: google.maps.TravelMode.DRIVING,
+        travelMode: travelMode as any,
         optimizeWaypoints: true,
       }, (result, status) => {
         if (status === "OK" && result) {
           directionsRenderer.setDirections(result);
           routePolyline.current = directionsRenderer;
+          setRouteLegs(result.routes?.[0]?.legs ?? []);
           console.log("✅ ルート描画成功（複数地点）");
         } else {
           console.warn("⚠️ ルート描画失敗（複数地点）:", status);
@@ -392,11 +441,12 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
             directionsService.route({
               origin: DEFAULT_ORIGIN,
               destination: { lat: limitedPoints[0].lat, lng: limitedPoints[0].lng },
-              travelMode: google.maps.TravelMode.DRIVING,
+              travelMode: travelMode as any,
             }, (fallbackResult, fallbackStatus) => {
               if (fallbackStatus === "OK" && fallbackResult) {
                 directionsRenderer.setDirections(fallbackResult);
                 routePolyline.current = directionsRenderer;
+                setRouteLegs(fallbackResult.routes?.[0]?.legs ?? []);
                 console.log("✅ フォールバックルート描画成功");
               } else {
                 console.warn("⚠️ フォールバックルート描画失敗:", fallbackStatus);
@@ -441,6 +491,41 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
         {chip("遊ぶ")}
         {chip("食べる")}
       </div>
+      {/* 交通手段セレクタ（右上） */}
+      <div style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: 8, zIndex: 2 }}>
+        {([
+          { label: '車', mode: 'DRIVING' },
+          { label: '徒歩', mode: 'WALKING' },
+          { label: '公共交通', mode: 'TRANSIT' },
+        ] as {label: string; mode: 'DRIVING'|'WALKING'|'TRANSIT'}[]).map((opt) => (
+          <button
+            key={opt.label}
+            onClick={() => setTravelMode(opt.mode)}
+            style={{
+              padding: '6px 10px',
+              borderRadius: 9999,
+              border: '1px solid #e5e7eb',
+              background: travelMode === opt.mode ? '#111827' : '#ffffff',
+              color: travelMode === opt.mode ? '#ffffff' : '#111827',
+              fontSize: 12,
+            }}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+      {/* レッグ要約（下部） */}
+      {routeLegs && routeLegs.length > 0 && (
+        <div style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', background: '#ffffff', border: '1px solid #e5e7eb', borderRadius: 12, padding: '8px 12px', fontSize: 12, color: '#111827', zIndex: 2 }}>
+          {routeLegs.map((leg, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span style={{ fontWeight: 700 }}>{i + 1}.</span>
+              <span>{routePointNames[i] ?? ''} → {routePointNames[i + 1] ?? ''}</span>
+              <span style={{ color: '#6b7280' }}>{leg.distance?.text} / {leg.duration?.text}</span>
+            </div>
+          ))}
+        </div>
+      )}
       {selectedPlaceId && (
         <CustomInfoPanel 
           placeId={selectedPlaceId} 
