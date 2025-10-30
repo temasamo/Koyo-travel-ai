@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import CustomInfoPanel from "./CustomInfoPanel";
 import { DEFAULT_ORIGIN, MAX_PROCESS_PLACES } from "@/constants/map";
 import { filterPlacesByConfidence } from "@/utils/maps";
+import { usePlanStore } from "@/store/planStore";
 
 interface Location {
   name: string;
@@ -14,8 +15,18 @@ interface MapViewProps {
   locations?: Location[];
   onPlaceClick?: (place: string) => void;
 }
-
+// ラッパー: Hook数を安定させるため、フェーズ分岐はここでのみ行う
 export default function MapView({ locations = [], onPlaceClick }: MapViewProps) {
+  const { planPhase, planMessage, origin, lodging } = usePlanStore();
+  return <ActualMapView locations={locations} onPlaceClick={onPlaceClick} />;
+}
+
+function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
+  const { planMessage, origin, lodging } = usePlanStore();
+  if (typeof window !== "undefined" && (!window.google || !(window as any).google.maps)) {
+    console.warn("Google Maps not ready yet.");
+    // 初期ロード時はスクリプト読み込みで復帰する
+  }
   const mapRef = useRef<HTMLDivElement>(null);
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const [markers, setMarkers] = useState<google.maps.marker.AdvancedMarkerElement[]>([]);
@@ -23,6 +34,7 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
   const routePolyline = useRef<google.maps.DirectionsRenderer | null>(null);
   const infoWindows = useRef<google.maps.InfoWindow[]>([]);
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
+  const [extractedFromPlan, setExtractedFromPlan] = useState<Location[]>([]);
 
   // グローバル関数を設定（CustomInfoPanel用）
   useEffect(() => {
@@ -66,10 +78,31 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
     init();
   }, []);
 
+  // Planのテキストから地名抽出 → マップへ反映
+  useEffect(() => {
+    const extract = async () => {
+      if (!planMessage || !isMapReady) return;
+      try {
+        const res = await fetch("/api/ai/extract-locations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: planMessage }),
+        });
+        const data = await res.json();
+        const locs: Location[] = Array.isArray(data.locations) ? data.locations : (data.locations?.locations ?? []);
+        setExtractedFromPlan(locs);
+      } catch (e) {
+        console.warn("extract-locations failed", e);
+      }
+    };
+    extract();
+  }, [planMessage, isMapReady]);
+
   // 地名に基づいてピンを追加し、ルートを描画する機能
   useEffect(() => {
     console.log("🔍 MapView useEffect - map:", !!map, "isMapReady:", isMapReady, "locations:", locations);
-    if (!map || !isMapReady || locations.length === 0) return;
+    const effectiveLocations = locations.length > 0 ? locations : extractedFromPlan;
+    if (!map || !isMapReady || effectiveLocations.length === 0) return;
 
     const addLocationMarkersAndRoute = async () => {
       try {
@@ -96,7 +129,7 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
         }
 
         // フィルタリング適用（必ず1件以上になる）
-        const candidates = filterPlacesByConfidence(locations);
+        const candidates = filterPlacesByConfidence(effectiveLocations as any);
         console.log(`📍 処理対象地点: ${candidates.length}件（制限: ${MAX_PROCESS_PLACES}）`);
 
         await resolveAndRender(candidates);
@@ -106,7 +139,7 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
     };
 
     addLocationMarkersAndRoute();
-  }, [map, isMapReady, locations]);
+  }, [map, isMapReady, locations, extractedFromPlan]);
 
   // 地名解決とマーカー・ルート描画
   const resolveAndRender = async (candidates: any[]) => {
@@ -285,7 +318,7 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
     });
 
     // 1地点のみの場合は直接ルート
-    if (limitedPoints.length === 1) {
+    if (limitedPoints.length === 1 && !lodging && !origin) {
       directionsService.route({
         origin: DEFAULT_ORIGIN,
         destination: { lat: limitedPoints[0].lat, lng: limitedPoints[0].lng },
@@ -307,8 +340,10 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
       }));
 
       directionsService.route({
-        origin: DEFAULT_ORIGIN,
-        destination: { lat: limitedPoints[limitedPoints.length - 1].lat, lng: limitedPoints[limitedPoints.length - 1].lng },
+        origin: (origin && origin.trim().length > 0) ? origin : DEFAULT_ORIGIN,
+        destination: (lodging && lodging.trim().length > 0)
+          ? lodging
+          : { lat: limitedPoints[limitedPoints.length - 1].lat, lng: limitedPoints[limitedPoints.length - 1].lng },
         waypoints,
         travelMode: google.maps.TravelMode.DRIVING,
         optimizeWaypoints: true,
