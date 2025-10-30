@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
+import { filterPlacesByConfidence } from "@/utils/maps";
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -67,7 +68,12 @@ export async function POST(req: Request) {
   try {
     const parsed = JSON.parse(response);
     console.log("✅ Parsed locations:", parsed);
-    return NextResponse.json(parsed);
+    
+    // フィルタリングを適用（信頼度0.6以上、最低1件保証）
+    const filteredLocations = filterPlacesByConfidence(parsed.locations || []);
+    console.log("🔍 Filtered locations:", filteredLocations);
+    
+    return NextResponse.json({ locations: filteredLocations });
   } catch (error) {
     console.error("❌ JSON parse error:", error);
     console.log("Raw response:", response);
