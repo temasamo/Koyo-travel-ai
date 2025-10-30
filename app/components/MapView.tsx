@@ -18,13 +18,6 @@ interface MapViewProps {
 // ラッパー: Hook数を安定させるため、フェーズ分岐はここでのみ行う
 export default function MapView({ locations = [], onPlaceClick }: MapViewProps) {
   const { planPhase, planMessage, origin, lodging } = usePlanStore();
-  if (planPhase === "selecting") {
-    return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "500px", backgroundColor: "#f3f4f6", color: "#9ca3af", borderRadius: 12 }}>
-        出発地と宿泊地を入力するとマップが表示されます
-      </div>
-    );
-  }
   return <ActualMapView locations={locations} onPlaceClick={onPlaceClick} />;
 }
 
