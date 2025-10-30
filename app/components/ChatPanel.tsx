@@ -1,4 +1,5 @@
 "use client";
+import { useEffect } from "react";
 import { usePlanStore } from "@/store/planStore";
 import ChatInterface from "./ChatInterface";
 
@@ -14,7 +15,27 @@ interface ChatPanelProps {
 }
 
 export default function ChatPanel({ onLocationsExtracted, selectedPlace }: ChatPanelProps) {
-  const { planPhase, origin, lodging, setOrigin, setLodging, setPhase } = usePlanStore();
+  const { planPhase, origin, lodging, setOrigin, setLodging, setPhase, setPlanMessage } = usePlanStore();
+
+  // planning になったらAIへ自動リクエスト
+  useEffect(() => {
+    if (planPhase === "planning" && origin && lodging) {
+      (async () => {
+        try {
+          const prompt = `出発地: ${origin}、宿泊地: ${lodging}。この条件で3泊4日の旅行プランを提案してください。観光地・温泉・食事内容も含めてください。`;
+          const res = await fetch("/api/ai/travelplan", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt }),
+          });
+          const data = await res.json();
+          setPlanMessage(data.plan || "プランの生成に失敗しました。");
+        } catch (e) {
+          setPlanMessage("プランの生成に失敗しました。");
+        }
+      })();
+    }
+  }, [planPhase, origin, lodging, setPlanMessage]);
 
   return (
     <div className="p-4">
