@@ -15,26 +15,25 @@ interface MapViewProps {
   locations?: Location[];
   onPlaceClick?: (place: string) => void;
 }
-
+// ラッパー: Hook数を安定させるため、フェーズ分岐はここでのみ行う
 export default function MapView({ locations = [], onPlaceClick }: MapViewProps) {
   const { planPhase } = usePlanStore();
-  const mapRef = useRef<HTMLDivElement>(null);
-  // selecting フェーズではマップを非表示（案内テキスト）
   if (planPhase === "selecting") {
     return (
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        height: "500px",
-        backgroundColor: "#f3f4f6",
-        color: "#9ca3af",
-        borderRadius: 12
-      }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "500px", backgroundColor: "#f3f4f6", color: "#9ca3af", borderRadius: 12 }}>
         出発地と宿泊地を入力するとマップが表示されます
       </div>
     );
   }
+  return <ActualMapView locations={locations} onPlaceClick={onPlaceClick} />;
+}
+
+function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
+  if (typeof window !== "undefined" && (!window.google || !(window as any).google.maps)) {
+    console.warn("Google Maps not ready yet.");
+    // 初期ロード時はスクリプト読み込みで復帰する
+  }
+  const mapRef = useRef<HTMLDivElement>(null);
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const [markers, setMarkers] = useState<google.maps.marker.AdvancedMarkerElement[]>([]);
   const [isMapReady, setIsMapReady] = useState(false);
