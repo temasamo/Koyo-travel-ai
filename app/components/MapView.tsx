@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import CustomInfoPanel from "./CustomInfoPanel";
 import { DEFAULT_ORIGIN, MAX_PROCESS_PLACES } from "@/constants/map";
 import { filterPlacesByConfidence } from "@/utils/maps";
+import { usePlanStore } from "@/store/planStore";
 
 interface Location {
   name: string;
@@ -16,7 +17,24 @@ interface MapViewProps {
 }
 
 export default function MapView({ locations = [], onPlaceClick }: MapViewProps) {
+  const { planPhase } = usePlanStore();
   const mapRef = useRef<HTMLDivElement>(null);
+  // selecting フェーズではマップを非表示（案内テキスト）
+  if (planPhase === "selecting") {
+    return (
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        height: "500px",
+        backgroundColor: "#f3f4f6",
+        color: "#9ca3af",
+        borderRadius: 12
+      }}>
+        出発地と宿泊地を入力するとマップが表示されます
+      </div>
+    );
+  }
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const [markers, setMarkers] = useState<google.maps.marker.AdvancedMarkerElement[]>([]);
   const [isMapReady, setIsMapReady] = useState(false);

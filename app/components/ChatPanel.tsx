@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { usePlanStore } from "@/store/planStore";
 
 interface Location {
   name: string;
@@ -18,11 +19,51 @@ interface ChatPanelProps {
 }
 
 export default function ChatPanel({ onLocationsExtracted, selectedPlace }: ChatPanelProps) {
+  const { planPhase, origin, lodging, setOrigin, setLodging, setPhase } = usePlanStore();
   const [messages, setMessages] = useState<{ role: string; content: string }[]>([
     { role: "assistant", content: "こんにちは！上山旅コンシェルジュです。どちらから出発されますか？" },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // フェーズ: selecting の時は入力フォームを表示し、チャットUIは非表示
+  if (planPhase === "selecting") {
+    return (
+      <div className="p-4 space-y-4 bg-gray-50 rounded-2xl shadow-sm">
+        <h2 className="text-lg font-semibold">旅の出発地と宿泊地を教えてください</h2>
+
+        <div>
+          <label className="block text-sm mb-1">出発地</label>
+          <input
+            type="text"
+            value={origin || ""}
+            onChange={(e) => setOrigin(e.target.value)}
+            placeholder="例：東京駅"
+            className="border rounded-md w-full p-2"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm mb-1">宿泊地</label>
+          <input
+            type="text"
+            value={lodging || ""}
+            onChange={(e) => setLodging(e.target.value)}
+            placeholder="例：古窯旅館"
+            className="border rounded-md w-full p-2"
+          />
+        </div>
+
+        <button
+          disabled={!origin || !lodging}
+          onClick={() => setPhase("planning")}
+          className="bg-green-600 text-white rounded-lg px-4 py-2 disabled:opacity-50"
+        >
+          プランを作成する
+        </button>
+      </div>
+    );
+  }
 
   // 選択された場所の詳細説明を取得
   useEffect(() => {
