@@ -45,6 +45,34 @@ export async function enrichWithDistance(origin: any, places: any[]): Promise<an
  * @param lng2 地点2の経度
  * @returns 距離（km）
  */
+import { MIN_CONFIDENCE, MAX_PROCESS_PLACES } from "@/constants/map";
+
+/**
+ * 信頼度で観光スポットをフィルタリング
+ * @param places 観光スポットの一覧
+ * @returns 信頼度0.2以上の観光スポット（最低1件は保証、最大8件）
+ */
+export function filterPlacesByConfidence(places: any[]) {
+  const sorted = [...places].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
+  let filtered = sorted.filter(p => (p.confidence ?? 0) >= MIN_CONFIDENCE);
+  
+  // 最低1件は通す
+  if (filtered.length === 0) {
+    filtered = sorted.slice(0, 1);
+    console.warn("⚠️ 全件フィルタ除外→最上位を強制採用:", filtered[0]);
+  }
+  
+  return filtered.slice(0, MAX_PROCESS_PLACES);
+}
+
+/**
+ * 2点間の距離を計算（ハヴァサイン公式）
+ * @param lat1 地点1の緯度
+ * @param lng1 地点1の経度
+ * @param lat2 地点2の緯度
+ * @param lng2 地点2の経度
+ * @returns 距離（km）
+ */
 function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371; // 地球の半径（km）
   const dLat = (lat2 - lat1) * Math.PI / 180;
