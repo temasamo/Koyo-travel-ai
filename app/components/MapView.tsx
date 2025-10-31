@@ -4,11 +4,16 @@ import CustomInfoPanel from "./CustomInfoPanel";
 import { DEFAULT_ORIGIN, MAX_PROCESS_PLACES } from "@/constants/map";
 import { filterPlacesByConfidence } from "@/utils/maps";
 import { usePlanStore } from "@/store/planStore";
+import { STAFF_RECOMMENDATIONS, CATEGORY_COLORS } from "@/constants/staffRecommendations";
 
 interface Location {
   name: string;
   type: string;
   confidence: number;
+  categories?: string[]; // スタッフおすすめ用
+  address?: string; // スタッフおすすめ用
+  lat?: number; // 緯度（事前定義でAPI呼び出し不要）
+  lng?: number; // 経度（事前定義でAPI呼び出し不要）
 }
 
 interface MapViewProps {
@@ -22,7 +27,7 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
 }
 
 function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
-  const { planMessage, origin, lodging, selectedCategories, setSelectedCategories } = usePlanStore();
+  const { planMessage, origin, lodging, selectedCategories, setSelectedCategories, showStaffRecommendations } = usePlanStore();
   if (typeof window !== "undefined" && (!window.google || !(window as any).google.maps)) {
     console.warn("Google Maps not ready yet.");
     // 初期ロード時はスクリプト読み込みで復帰する
@@ -187,20 +192,47 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
 
   // 地名に基づいてピンを追加し、ルートを描画する機能
   useEffect(() => {
-    console.log("🔍 MapView useEffect - map:", !!map, "isMapReady:", isMapReady, "locations:", locations);
+    console.log("🔍 MapView useEffect - map:", !!map, "isMapReady:", isMapReady, "locations:", locations, "showStaffRecommendations:", showStaffRecommendations);
+    
+    // スタッフおすすめスポットをLocation形式に変換（座標も含む）
+    const staffLocations: Location[] = showStaffRecommendations 
+      ? STAFF_RECOMMENDATIONS.map(rec => ({
+          name: rec.name,
+          type: 'attraction',
+          confidence: 1.0, // スタッフおすすめは最高信頼度
+          categories: rec.categories,
+          address: rec.address,
+          lat: rec.lat,
+          lng: rec.lng,
+        }))
+      : [];
+    
     // カテゴリ選択時はカテゴリ検索結果を優先、それ以外はlocationsを優先
     let effectiveLocations = (selectedCategories && selectedCategories.length > 0 && extractedFromPlan.length > 0) 
       ? extractedFromPlan 
       : (locations.length > 0 ? locations : extractedFromPlan);
+    
+    // スタッフおすすめを統合
+    if (showStaffRecommendations && staffLocations.length > 0) {
+      effectiveLocations = [...staffLocations, ...effectiveLocations];
+    }
+    
     // カテゴリフィルタ（選択がある場合のみ）
     if (selectedCategories && selectedCategories.length > 0) {
       const beforeFilter = effectiveLocations.length;
-      effectiveLocations = effectiveLocations.filter((loc) =>
-        selectedCategories.some((c) => matchCategory(loc.name, c))
-      );
-      console.log(`🎯 カテゴリフィルタ: ${beforeFilter}件 → ${effectiveLocations.length}件`, effectiveLocations.map(l => l.name));
+      effectiveLocations = effectiveLocations.filter((loc: any) => {
+        // スタッフおすすめの場合は、categoriesプロパティで判定
+        if (loc.categories) {
+          return selectedCategories.some((c) => loc.categories.includes(c));
+        }
+        return selectedCategories.some((c) => matchCategory(loc.name, c));
+      });
+      console.log(`🎯 カテゴリフィルタ: ${beforeFilter}件 → ${effectiveLocations.length}件`, effectiveLocations.map((l: any) => l.name));
     }
-    if (!map || !isMapReady || effectiveLocations.length === 0) return;
+    
+    // スタッフおすすめがONかつ有効な地点がない場合でも、スタッフおすすめがあれば表示
+    if (!map || !isMapReady) return;
+    if (effectiveLocations.length === 0 && (!showStaffRecommendations || staffLocations.length === 0)) return;
 
     const addLocationMarkersAndRoute = async () => {
       try {
@@ -227,9 +259,18 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
         }
         setRouteLegs([]);
 
-        // フィルタリング適用（必ず1件以上になる）
-        const candidates = filterPlacesByConfidence(effectiveLocations as any);
-        console.log(`📍 処理対象地点: ${candidates.length}件（制限: ${MAX_PROCESS_PLACES}）`);
+        // フィルタリング適用（スタッフおすすめの場合は制限なし）
+        let candidates: any[];
+        const hasStaffLocations = effectiveLocations.some((loc: any) => loc.lat && loc.lng && loc.confidence === 1.0);
+        if (showStaffRecommendations && hasStaffLocations) {
+          // スタッフおすすめの場合：制限なしで全件表示（API呼び出しなしのため）
+          candidates = effectiveLocations;
+          console.log(`📍 処理対象地点: ${candidates.length}件（スタッフおすすめ: 制限なし）`);
+        } else {
+          // 通常の場合：信頼度フィルタと件数制限を適用
+          candidates = filterPlacesByConfidence(effectiveLocations as any);
+          console.log(`📍 処理対象地点: ${candidates.length}件（制限: ${MAX_PROCESS_PLACES}）`);
+        }
 
         await resolveAndRender(candidates);
       } catch (error) {
@@ -238,7 +279,7 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
     };
 
     addLocationMarkersAndRoute();
-  }, [map, isMapReady, locations, extractedFromPlan]);
+  }, [map, isMapReady, locations, extractedFromPlan, showStaffRecommendations]);
 
   // 地名解決とマーカー・ルート描画
   const resolveAndRender = async (candidates: any[]) => {
@@ -260,30 +301,69 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
         const query = candidate.name || candidate.text;
         if (!query) continue;
 
-        // 地名で検索
-        const searchRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Goog-Api-Key": String(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY),
-            "X-Goog-FieldMask": "places.id,places.displayName,places.location,places.rating,places.userRatingCount,places.photos,places.formattedAddress",
-          },
-          body: JSON.stringify({
-            textQuery: `${query} 山形県`,
-            languageCode: "ja",
-            regionCode: "JP",
-          }),
-        });
-
-        const searchData = await searchRes.json();
-        const place = searchData.places?.[0];
+        // 座標が既に定義されている場合はAPI呼び出し不要（スタッフおすすめなど）
+        let position: google.maps.LatLng | null = null;
+        let place: any = null;
         
-        console.log(`🔍 検索結果 (${query}):`, place);
+        if ((candidate as any).lat && (candidate as any).lng) {
+          // 座標が定義済み：API呼び出し不要
+          position = new google.maps.LatLng((candidate as any).lat, (candidate as any).lng);
+          place = {
+            displayName: { text: query },
+            formattedAddress: (candidate as any).address || query,
+          };
+          console.log(`📍 座標使用 (${query}):`, position);
+        } else {
+          // 座標が未定義：Places APIで検索
+          const searchRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Goog-Api-Key": String(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY),
+              "X-Goog-FieldMask": "places.id,places.displayName,places.location,places.rating,places.userRatingCount,places.photos,places.formattedAddress",
+            },
+            body: JSON.stringify({
+              textQuery: `${query} 山形県`,
+              languageCode: "ja",
+              regionCode: "JP",
+            }),
+          });
 
-        if (place?.location) {
-          const position = new google.maps.LatLng(place.location.latitude, place.location.longitude);
+          const searchData = await searchRes.json();
+          place = searchData.places?.[0];
+          
+          console.log(`🔍 検索結果 (${query}):`, place);
+
+          if (place?.location) {
+            position = new google.maps.LatLng(place.location.latitude, place.location.longitude);
+          }
+        }
+
+        if (position) {
           // 番号バッジ付きマーカー（解決順 1..n）
           const order = resolved.length + 1;
+          
+          // カテゴリ別の色を決定（優先順位：「遊ぶ」>「自然」>「歴史」>「食べる」>「学ぶ」）
+          const categories = (candidate as any).categories || [];
+          let categoryColor = "#EF4444"; // デフォルトは赤
+          if (categories.length > 0) {
+            // 優先順位に従って色を決定
+            if (categories.includes("遊ぶ")) {
+              categoryColor = CATEGORY_COLORS["遊ぶ"] || "#EF4444";
+            } else if (categories.includes("自然")) {
+              categoryColor = CATEGORY_COLORS["自然"] || "#EF4444";
+            } else if (categories.includes("歴史")) {
+              categoryColor = CATEGORY_COLORS["歴史"] || "#EF4444";
+            } else if (categories.includes("食べる")) {
+              categoryColor = CATEGORY_COLORS["食べる"] || "#EF4444";
+            } else if (categories.includes("学ぶ")) {
+              categoryColor = CATEGORY_COLORS["学ぶ"] || "#EF4444";
+            } else {
+              // その他のカテゴリは最初の色を使用
+              categoryColor = CATEGORY_COLORS[categories[0]] || "#EF4444";
+            }
+          }
+          
           const badge = document.createElement("div");
           badge.style.display = "flex";
           badge.style.alignItems = "center";
@@ -291,7 +371,7 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
           badge.style.width = "28px";
           badge.style.height = "28px";
           badge.style.borderRadius = "9999px";
-          badge.style.background = "#EF4444";
+          badge.style.background = categoryColor;
           badge.style.color = "#fff";
           badge.style.fontSize = "12px";
           badge.style.fontWeight = "700";
@@ -310,6 +390,11 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
             ? `https://places.googleapis.com/v1/${place.photos[0].name}/media?key=${String(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY)}&maxWidthPx=300`
             : null;
 
+          const commentId = place.id || query.replace(/\s+/g, '-');
+          const mapUrl = place.id 
+            ? `https://www.google.com/maps/place/?q=place_id:${place.id}`
+            : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+
           const infoWindow = new google.maps.InfoWindow({
             content: `
               <div style="max-width:300px; font-family: system-ui, -apple-system, sans-serif;">
@@ -324,13 +409,13 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
                 <div style="opacity:.8; font-size:13px; color:#f59e0b; margin-bottom:4px;">
                   ⭐ ${place.rating ? place.rating.toFixed(1) : "-"}（${place.userRatingCount || 0}件）
                 </div>
-                <div id="ai-comment-${place.id}" style="font-size:13px; color:#374151; background:#F9FAFB; padding:6px 8px; border-radius:6px; margin:6px 0;">
+                <div id="ai-comment-${commentId}" style="font-size:13px; color:#374151; background:#F9FAFB; padding:6px 8px; border-radius:6px; margin:6px 0;">
                   AIコメント生成中...
                 </div>
                 <div style="margin-top:6px; font-size:13px; color:#6b7280;">
-                  ${place.formattedAddress || ""}
+                  ${place.formattedAddress || (candidate as any).address || ""}
                 </div>
-                <a href="https://www.google.com/maps/place/?q=place_id:${place.id}" target="_blank" 
+                <a href="${mapUrl}" target="_blank" 
                    style="display:inline-block;margin-top:8px; padding:4px 8px; background-color:#10b981; color:white; text-decoration:none; border-radius:4px; font-size:12px;">
                   Googleマップで見る
                 </a>
@@ -359,13 +444,13 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
                 body: JSON.stringify({ prompt }),
               });
               const data = await res.json();
-              const el = document.getElementById(`ai-comment-${place.id}`);
+              const el = document.getElementById(`ai-comment-${commentId}`);
               if (el) {
                 el.textContent = data?.comment || "コメントを取得できませんでした。";
               }
             } catch (e) {
               console.warn("AIコメント取得失敗", e);
-              const el = document.getElementById(`ai-comment-${place.id}`);
+              const el = document.getElementById(`ai-comment-${commentId}`);
               if (el) {
                 el.textContent = "コメントを取得できませんでした。";
               }
@@ -374,10 +459,15 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
 
           newMarkers.push(marker);
           infoWindows.current.push(infoWindow);
+          
+          // 座標を取得（定義済みの場合はcandidateから、APIの場合はplaceから）
+          const lat = (candidate as any).lat || place?.location?.latitude || position.lat();
+          const lng = (candidate as any).lng || place?.location?.longitude || position.lng();
+          
           resolved.push({ 
             name: place.displayName?.text || query, 
-            lat: place.location.latitude, 
-            lng: place.location.longitude,
+            lat,
+            lng,
             placeId: place.id
           });
         }
