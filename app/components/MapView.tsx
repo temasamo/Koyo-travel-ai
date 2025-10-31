@@ -39,6 +39,7 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
   const infoWindows = useRef<google.maps.InfoWindow[]>([]);
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
   const [extractedFromPlan, setExtractedFromPlan] = useState<Location[]>([]);
+  const categorySearchCache = useRef<Map<string, Location[]>>(new Map());
 
   // グローバル関数を設定（CustomInfoPanel用）
   useEffect(() => {
@@ -102,61 +103,102 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
     extract();
   }, [planMessage, isMapReady]);
 
-  // カテゴリ選択時、表示対象がなくなる場合はPlaces検索で補完
+  // カテゴリマッチャ
+  const matchCategory = (name: string, category: string) => {
+    const n = name || "";
+    if (category === "歴史") return /(城|寺|神社|史跡)/.test(n);
+    if (category === "自然") return /(公園|滝|湖|展望|蔵王|お釜|峡|岳|山)/.test(n);
+    if (category === "遊ぶ") return /(ロープウェイ|体験|スキー|遊園|アクティビティ|スノー|テーマパーク|ワールド|リナ)/.test(n);
+    if (category === "食べる") return /(食|レストラン|カフェ|そば|郷土|食堂)/.test(n);
+    return true;
+  };
+
+  // カテゴリ選択時、Places検索で補完（キャッシュ機能付き）
   useEffect(() => {
     const runCategorySearch = async () => {
       if (!isMapReady || !selectedCategories || selectedCategories.length === 0) return;
+      
+      const cat = selectedCategories[0];
+      
+      // キャッシュチェック
+      if (categorySearchCache.current.has(cat)) {
+        const cached = categorySearchCache.current.get(cat)!;
+        console.log(`💾 キャッシュから取得 (${cat}): ${cached.length}件`, cached.map(l => l.name));
+        setExtractedFromPlan(cached);
+        return;
+      }
+      
+      // 既存データでカテゴリにマッチするものがあるかチェック
       const effective = locations.length > 0 ? locations : extractedFromPlan;
-      const filtered = effective.filter((loc) => selectedCategories.some((c) => matchCategory(loc.name, c)));
-      if (filtered.length > 0) return; // 既存データで足りている
-
+      const matched = effective.filter((loc) => matchCategory(loc.name, cat));
+      if (matched.length >= 3) {
+        console.log(`✅ 既存データで十分 (${cat}): ${matched.length}件`, matched.map(l => l.name));
+        setExtractedFromPlan(matched);
+        categorySearchCache.current.set(cat, matched);
+        return;
+      }
+      
+      // API呼び出しが必要な場合のみ実行
       try {
-        const cat = selectedCategories[0];
-        const keyword = cat === '歴史' ? '城 寺 神社 史跡' : cat === '自然' ? '公園 滝 湖 展望' : cat === '遊ぶ' ? '体験 ロープウェイ アクティビティ' : '郷土料理 レストラン カフェ';
-        const textQuery = `上山市 ${keyword}`;
+        const headers = {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': String(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY),
+          'X-Goog-FieldMask': 'places.id,places.displayName,places.location,places.rating,places.userRatingCount',
+        };
+        
+        // 1カテゴリ1クエリに縮小（API使用量削減）
+        let textQuery = '';
+        if (cat === '歴史') {
+          textQuery = '上山市 城 寺 神社 史跡';
+        } else if (cat === '自然') {
+          textQuery = '上山市 公園 滝 湖 展望 蔵王';
+        } else if (cat === '遊ぶ') {
+          textQuery = '山形県 遊園地 テーマパーク リナワールド ロープウェイ 体験';
+        } else {
+          textQuery = '上山市 レストラン カフェ 郷土料理';
+        }
+        
+        console.log(`🔍 API呼び出し開始 (${cat}): 1クエリ - "${textQuery}"`);
         const res = await fetch('https://places.googleapis.com/v1/places:searchText', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Goog-Api-Key': String(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY),
-            'X-Goog-FieldMask': 'places.id,places.displayName,places.location,places.rating,places.userRatingCount',
-          },
+          headers,
           body: JSON.stringify({ textQuery, languageCode: 'ja', regionCode: 'JP' }),
         });
         const data = await res.json();
-        const locs: Location[] = (data.places || []).slice(0, 8).map((p: any) => ({
+        
+        const locs: Location[] = (data.places || []).slice(0, 15).map((p: any) => ({
           name: p.displayName?.text ?? 'スポット',
           type: 'attraction',
           confidence: 0.9, // Placesでヒットしたので高めに
         }));
-        if (locs.length > 0) setExtractedFromPlan(locs);
+        
+        console.log(`🔍 API検索結果 (${cat}): ${locs.length}件`, locs.map(l => l.name));
+        if (locs.length > 0) {
+          setExtractedFromPlan(locs);
+          categorySearchCache.current.set(cat, locs);
+        }
       } catch (e) {
-        console.warn('category search failed', e);
+        console.warn(`category search failed (${cat}):`, e);
       }
     };
     runCategorySearch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCategories, isMapReady]);
 
-  // カテゴリマッチャ
-  const matchCategory = (name: string, category: string) => {
-    const n = name || "";
-    if (category === "歴史") return /(城|寺|神社|史跡)/.test(n);
-    if (category === "自然") return /(公園|滝|湖|展望|蔵王|お釜|峡|岳|山)/.test(n);
-    if (category === "遊ぶ") return /(ロープウェイ|体験|スキー|遊園|アクティビティ|スノー)/.test(n);
-    if (category === "食べる") return /(食|レストラン|カフェ|そば|郷土|食堂)/.test(n);
-    return true;
-  };
-
   // 地名に基づいてピンを追加し、ルートを描画する機能
   useEffect(() => {
     console.log("🔍 MapView useEffect - map:", !!map, "isMapReady:", isMapReady, "locations:", locations);
-    let effectiveLocations = locations.length > 0 ? locations : extractedFromPlan;
+    // カテゴリ選択時はカテゴリ検索結果を優先、それ以外はlocationsを優先
+    let effectiveLocations = (selectedCategories && selectedCategories.length > 0 && extractedFromPlan.length > 0) 
+      ? extractedFromPlan 
+      : (locations.length > 0 ? locations : extractedFromPlan);
     // カテゴリフィルタ（選択がある場合のみ）
     if (selectedCategories && selectedCategories.length > 0) {
+      const beforeFilter = effectiveLocations.length;
       effectiveLocations = effectiveLocations.filter((loc) =>
         selectedCategories.some((c) => matchCategory(loc.name, c))
       );
+      console.log(`🎯 カテゴリフィルタ: ${beforeFilter}件 → ${effectiveLocations.length}件`, effectiveLocations.map(l => l.name));
     }
     if (!map || !isMapReady || effectiveLocations.length === 0) return;
 
