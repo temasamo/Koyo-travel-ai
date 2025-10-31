@@ -500,8 +500,9 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
       p.name !== '山形市'
     );
 
-    // 最大3つの地点に制限（Google Directions APIの制限を考慮）
-    const limitedPoints = filteredPoints.slice(0, 3);
+    // 最大6つの地点に制限（Google Directions APIの制限: waypointは最大25個、10個以下は通常料金）
+    // 6地点 = 出発地1 + 経由地5 + 目的地1 → 経由地5個なので通常料金
+    const limitedPoints = filteredPoints.slice(0, 6);
 
     console.log(`🗺️ ルート描画対象: ${limitedPoints.length}件 (元: ${points.length}件)`);
     console.log('地点:', limitedPoints.map(p => p.name));
@@ -558,7 +559,8 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
           : { lat: limitedPoints[limitedPoints.length - 1].lat, lng: limitedPoints[limitedPoints.length - 1].lng },
         waypoints,
         travelMode: travelMode as any,
-        optimizeWaypoints: true,
+        // optimizeWaypoints: false（無効化）→ 通常料金（$5.00/1,000リクエスト）を適用
+        // optimizeWaypoints: true の場合は Directions Advanced SKU（$10.00/1,000リクエスト）が適用される
       }, (result, status) => {
         if (status === "OK" && result) {
           directionsRenderer.setDirections(result);
