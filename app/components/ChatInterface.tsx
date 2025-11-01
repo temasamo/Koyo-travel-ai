@@ -18,7 +18,7 @@ interface ChatInterfaceProps {
 }
 
 export default function ChatInterface({ onLocationsExtracted, selectedPlace }: ChatInterfaceProps) {
-  const { planMessage } = usePlanStore();
+  const { planMessage, setPlanMessage, setRouteRules, triggerRouteGeneration } = usePlanStore();
   const [messages, setMessages] = useState<{ role: string; content: string }[]>([
     { role: "assistant", content: "こんにちは！上山旅コンシェルジュです。行きたい場所や気分を教えてください。" },
   ]);
@@ -60,6 +60,17 @@ export default function ChatInterface({ onLocationsExtracted, selectedPlace }: C
       });
       const data = await res.json();
       setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
+
+      // AI生成メッセージをstoreに保存
+      if (data.reply) {
+        setPlanMessage(data.reply);
+      }
+
+      // ルート生成ルールを設定（APIから返された場合）
+      if (data.routeRules) {
+        setRouteRules(data.routeRules);
+        console.log("✅ ルート生成ルールを設定:", data.routeRules);
+      }
 
       if (data.reply && onLocationsExtracted) {
         const extractRes = await fetch("/api/extract-locations", {

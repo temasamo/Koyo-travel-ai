@@ -27,7 +27,18 @@ export default function MapView({ locations = [], onPlaceClick }: MapViewProps) 
 }
 
 function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
-  const { planMessage, origin, lodging, selectedCategories, setSelectedCategories, showStaffRecommendations } = usePlanStore();
+  const { 
+    planMessage, 
+    origin, 
+    lodging, 
+    selectedCategories, 
+    setSelectedCategories, 
+    showStaffRecommendations,
+    routeRules,
+    shouldGenerateRoute,
+    resetRouteGeneration,
+    triggerRouteGeneration
+  } = usePlanStore();
   if (typeof window !== "undefined" && (!window.google || !(window as any).google.maps)) {
     console.warn("Google Maps not ready yet.");
     // 初期ロード時はスクリプト読み込みで復帰する
@@ -37,8 +48,15 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
   const [markers, setMarkers] = useState<google.maps.marker.AdvancedMarkerElement[]>([]);
   const [isMapReady, setIsMapReady] = useState(false);
   const routePolyline = useRef<google.maps.DirectionsRenderer | null>(null);
+  const aiRoutePolyline = useRef<google.maps.Polyline | null>(null);
   const [routeLegs, setRouteLegs] = useState<google.maps.DirectionsLeg[]>([]);
   const [routePointNames, setRoutePointNames] = useState<string[]>([]);
+  const [aiRouteSegments, setAiRouteSegments] = useState<Array<{from: string; to: string; distance?: string; duration?: string}>>([]);
+  // 各ルートセグメントのPolylineを管理（ハイライト用）
+  const routeSegmentPolylines = useRef<google.maps.Polyline[]>([]);
+  const [hoveredSegmentIndex, setHoveredSegmentIndex] = useState<number | null>(null);
+  const [selectedSegmentIndex, setSelectedSegmentIndex] = useState<number | null>(null);
+  const blinkIntervalRef = useRef<NodeJS.Timeout | null>(null);
   // 初期レンダリング時には google は未定義のため、プレーン文字列で管理
   const [travelMode, setTravelMode] = useState<'DRIVING' | 'WALKING' | 'TRANSIT'>('DRIVING');
   const infoWindows = useRef<google.maps.InfoWindow[]>([]);
@@ -88,25 +106,240 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
     init();
   }, []);
 
-  // Planのテキストから地名抽出 → マップへ反映
+  // Planのテキストから地名抽出とルート情報抽出 → マップへ反映
   useEffect(() => {
     const extract = async () => {
       if (!planMessage || !isMapReady) return;
+      
+      // スタッフおすすめモードの場合、AI生成ルートは使用しない
+      if (showStaffRecommendations) {
+        console.log("⏸️ スタッフおすすめモード: AI生成ルートをスキップ");
+        // AI生成ルート関連をクリア
+        setAiRouteSegments([]);
+        if (aiRoutePolyline.current) {
+          aiRoutePolyline.current.setMap(null);
+          aiRoutePolyline.current = null;
+        }
+        return;
+      }
+      
+      // 古いルート情報をクリア
+      setAiRouteSegments([]);
+      setRouteLegs([]);
+      setRoutePointNames([]);
+      // AIルート線もクリア
+      if (aiRoutePolyline.current) {
+        aiRoutePolyline.current.setMap(null);
+        aiRoutePolyline.current = null;
+      }
+      
       try {
-        const res = await fetch("/api/ai/extract-locations", {
+        // 地名抽出
+        const locRes = await fetch("/api/ai/extract-locations", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text: planMessage }),
         });
-        const data = await res.json();
-        const locs: Location[] = Array.isArray(data.locations) ? data.locations : (data.locations?.locations ?? []);
+        const locData = await locRes.json();
+        const locs: Location[] = Array.isArray(locData.locations) ? locData.locations : (locData.locations?.locations ?? []);
         setExtractedFromPlan(locs);
+        console.log("📍 抽出された地名:", locs.map(l => l.name));
+
+        // AI生成テキストからルート情報を抽出
+        const routeRes = await fetch("/api/ai/extract-route", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: planMessage }),
+        });
+        const routeData = await routeRes.json();
+        const routeSegments = routeData.routeSegments || [];
+        console.log("🔍 抽出されたルート情報:", routeSegments);
+        
+        if (routeSegments.length > 0) {
+          console.log("✅ AI生成ルート情報を抽出:", routeSegments);
+          setAiRouteSegments(routeSegments);
+          // Google Directions APIのルートは不要なのでクリア
+          setRouteLegs([]);
+          setRoutePointNames([]);
+          // ルート線を描画
+          drawAiRouteLines(routeSegments, locs);
+        } else {
+          console.log("⚠️ ルート情報が見つからない - 地名の順番からルート表を作成");
+          // ルート情報が見つからない場合、地名の順番からルート表を作成
+          if (locs.length > 1) {
+            const segmentsFromLocs = [];
+            // 古窯旅館から開始（最初の地点が古窯旅館でない場合は追加）
+            const startPoint = locs[0].name === "古窯旅館" ? locs[0].name : "古窯旅館";
+            if (locs[0].name !== "古窯旅館") {
+              segmentsFromLocs.push({
+                from: "古窯旅館",
+                to: locs[0].name,
+                distance: "推定",
+                duration: "推定"
+              });
+            }
+            // 残りの地点間のルート
+            for (let i = 0; i < locs.length - 1; i++) {
+              segmentsFromLocs.push({
+                from: locs[i].name,
+                to: locs[i + 1].name,
+                distance: "推定",
+                duration: "推定"
+              });
+            }
+            console.log("📍 地名順から生成したルート表:", segmentsFromLocs);
+            setAiRouteSegments(segmentsFromLocs);
+            // ルート線を描画
+            drawAiRouteLines(segmentsFromLocs, locs);
+          }
+        }
       } catch (e) {
-        console.warn("extract-locations failed", e);
+        console.warn("extract failed", e);
       }
     };
     extract();
-  }, [planMessage, isMapReady]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planMessage, isMapReady, showStaffRecommendations]);
+
+  // AI生成ルートの地点間に線を引く
+  const drawAiRouteLines = async (segments: Array<{from: string; to: string; distance?: string; duration?: string}>, locations: Location[]) => {
+    if (!map || !isMapReady || segments.length === 0) return;
+
+    // 既存のAIルート線をクリア
+    if (aiRoutePolyline.current) {
+      aiRoutePolyline.current.setMap(null);
+      aiRoutePolyline.current = null;
+    }
+
+    try {
+      // 地点名から座標を取得
+      const locationMap = new Map<string, {lat: number; lng: number}>();
+      
+      // 抽出された地点の座標をマップに追加
+      for (const loc of locations) {
+        if ((loc as any).lat && (loc as any).lng) {
+          locationMap.set(loc.name, { lat: (loc as any).lat, lng: (loc as any).lng });
+        }
+      }
+
+      // スタッフおすすめの座標も追加
+      for (const rec of STAFF_RECOMMENDATIONS) {
+        if (rec.lat && rec.lng) {
+          locationMap.set(rec.name, { lat: rec.lat, lng: rec.lng });
+        }
+      }
+
+      // 古窯旅館の座標を追加
+      locationMap.set("古窯旅館", { lat: DEFAULT_ORIGIN.lat, lng: DEFAULT_ORIGIN.lng });
+
+      // 各セグメントの座標を取得
+      const path: google.maps.LatLng[] = [];
+      const missingLocations: string[] = [];
+      const processedLocations = new Set<string>();
+
+      for (const segment of segments) {
+        // 出発地点の座標を取得
+        let fromCoord = locationMap.get(segment.from);
+        if (!fromCoord) {
+          try {
+            const searchRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Goog-Api-Key": String(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY),
+                "X-Goog-FieldMask": "places.location",
+              },
+              body: JSON.stringify({
+                textQuery: `${segment.from} 山形県`,
+                languageCode: "ja",
+                regionCode: "JP",
+              }),
+            });
+            const searchData = await searchRes.json();
+            const place = searchData.places?.[0];
+            if (place?.location) {
+              fromCoord = { lat: place.location.latitude, lng: place.location.longitude };
+              locationMap.set(segment.from, fromCoord);
+            } else {
+              missingLocations.push(segment.from);
+              continue;
+            }
+          } catch (e) {
+            console.warn(`座標取得失敗 (${segment.from}):`, e);
+            missingLocations.push(segment.from);
+            continue;
+          }
+        }
+
+        // 目的地の座標を取得
+        let toCoord = locationMap.get(segment.to);
+        if (!toCoord) {
+          try {
+            const searchRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Goog-Api-Key": String(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY),
+                "X-Goog-FieldMask": "places.location",
+              },
+              body: JSON.stringify({
+                textQuery: `${segment.to} 山形県`,
+                languageCode: "ja",
+                regionCode: "JP",
+              }),
+            });
+            const searchData = await searchRes.json();
+            const place = searchData.places?.[0];
+            if (place?.location) {
+              toCoord = { lat: place.location.latitude, lng: place.location.longitude };
+              locationMap.set(segment.to, toCoord);
+            } else {
+              missingLocations.push(segment.to);
+              continue;
+            }
+          } catch (e) {
+            console.warn(`座標取得失敗 (${segment.to}):`, e);
+            missingLocations.push(segment.to);
+            continue;
+          }
+        }
+
+        // 出発地点を追加（まだ追加されていない場合）
+        if (!processedLocations.has(segment.from) && fromCoord) {
+          path.push(new google.maps.LatLng(fromCoord.lat, fromCoord.lng));
+          processedLocations.add(segment.from);
+        }
+
+        // 目的地を追加
+        if (toCoord) {
+          path.push(new google.maps.LatLng(toCoord.lat, toCoord.lng));
+          processedLocations.add(segment.to);
+        }
+      }
+
+      if (missingLocations.length > 0) {
+        console.warn("⚠️ 座標が見つからない地点:", missingLocations);
+      }
+
+      if (path.length >= 2) {
+        // Polylineを描画
+        const polyline = new google.maps.Polyline({
+          path: path,
+          geodesic: true,
+          strokeColor: "#007BFF",
+          strokeOpacity: 0.6,
+          strokeWeight: 3,
+          map: map,
+        });
+        aiRoutePolyline.current = polyline;
+        console.log("✅ AI生成ルート線を描画:", path.length, "地点");
+      } else {
+        console.warn("⚠️ ルート線描画に必要な座標が不足しています");
+      }
+    } catch (error) {
+      console.error("❌ AIルート線描画エラー:", error);
+    }
+  };
 
   // カテゴリマッチャ
   const matchCategory = (name: string, category: string) => {
@@ -207,17 +440,22 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
         }))
       : [];
     
-    // カテゴリ選択時はカテゴリ検索結果を優先、それ以外はlocationsを優先
-    let effectiveLocations = (selectedCategories && selectedCategories.length > 0 && extractedFromPlan.length > 0) 
-      ? extractedFromPlan 
-      : (locations.length > 0 ? locations : extractedFromPlan);
-    
-    // スタッフおすすめを統合
+    // スタッフおすすめボタンがONの場合、スタッフおすすめのスポットのみを使用
+    let effectiveLocations: Location[] = [];
     if (showStaffRecommendations && staffLocations.length > 0) {
-      effectiveLocations = [...staffLocations, ...effectiveLocations];
+      // スタッフおすすめのみを使用（他のソースは無視）
+      effectiveLocations = [...staffLocations];
+      console.log("✅ スタッフおすすめモード: スタッフおすすめのスポットのみを使用", effectiveLocations.length, "件");
+    } else {
+      // スタッフおすすめがOFFの場合のみ、他のソースを使用
+      // カテゴリ選択時はカテゴリ検索結果を優先、それ以外はlocationsを優先
+      effectiveLocations = (selectedCategories && selectedCategories.length > 0 && extractedFromPlan.length > 0) 
+        ? extractedFromPlan 
+        : (locations.length > 0 ? locations : extractedFromPlan);
     }
     
     // カテゴリフィルタ（選択がある場合のみ）
+    // スタッフおすすめモードでもカテゴリフィルタは適用
     if (selectedCategories && selectedCategories.length > 0) {
       const beforeFilter = effectiveLocations.length;
       effectiveLocations = effectiveLocations.filter((loc: any) => {
@@ -257,7 +495,16 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
           routePolyline.current.setMap(null);
           routePolyline.current = null;
         }
+        // セグメントPolylineもクリア
+        routeSegmentPolylines.current.forEach(polyline => {
+          if (polyline) polyline.setMap(null);
+        });
+        routeSegmentPolylines.current = [];
         setRouteLegs([]);
+        setRoutePointNames([]);
+        setHoveredSegmentIndex(null);
+        setSelectedSegmentIndex(null);
+        // AI生成ルートセグメントは保持（planMessageが変わらない限り）
 
         // フィルタリング適用（スタッフおすすめの場合は制限なし）
         let candidates: any[];
@@ -279,7 +526,7 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
     };
 
     addLocationMarkersAndRoute();
-  }, [map, isMapReady, locations, extractedFromPlan, showStaffRecommendations]);
+  }, [map, isMapReady, locations, extractedFromPlan, showStaffRecommendations, routeRules, shouldGenerateRoute]);
 
   // 地名解決とマーカー・ルート描画
   const resolveAndRender = async (candidates: any[]) => {
@@ -480,29 +727,90 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
     
     if (resolved.length > 0) {
       setMarkers(newMarkers);
-      drawRouteFromOrigin(resolved);
+      // スタッフおすすめモードの場合は自動的にルート生成
+      // それ以外はルート生成ルールに基づいて判断
+      const shouldAutoGenerate = showStaffRecommendations || routeRules.autoGenerate || shouldGenerateRoute;
+      
+      if (shouldAutoGenerate) {
+        drawRouteFromOrigin(resolved);
+        if (shouldGenerateRoute) {
+          resetRouteGeneration(); // フラグをリセット
+        }
+      } else {
+        console.log("⏸️ ルート自動生成が無効化されています。手動でトリガーしてください。");
+      }
     } else {
       console.log("❌ 解決できた地点が0件");
     }
   };
 
-  // 古窯旅館からのルート描画
+  // 古窯旅館の座標を取得（初回のみ）
+  const [koyoCoordinates, setKoyoCoordinates] = useState<{lat: number; lng: number} | null>(null);
+  
+  useEffect(() => {
+    const fetchKoyoCoordinates = async () => {
+      if (koyoCoordinates || !isMapReady) return;
+      
+      try {
+        const searchRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": String(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY),
+            "X-Goog-FieldMask": "places.id,places.displayName,places.location,places.formattedAddress",
+          },
+          body: JSON.stringify({
+            textQuery: "古窯旅館 山形県上山市",
+            languageCode: "ja",
+            regionCode: "JP",
+          }),
+        });
+
+        const searchData = await searchRes.json();
+        const place = searchData.places?.[0];
+        
+        if (place?.location) {
+          const coords = {
+            lat: place.location.latitude,
+            lng: place.location.longitude
+          };
+          setKoyoCoordinates(coords);
+          console.log("✅ 古窯旅館の座標を取得:", coords, place.displayName?.text);
+        } else {
+          console.warn("⚠️ 古窯旅館の座標を取得できませんでした。DEFAULT_ORIGINを使用します。");
+          setKoyoCoordinates(DEFAULT_ORIGIN);
+        }
+      } catch (error) {
+        console.error("❌ 古窯旅館の座標取得エラー:", error);
+        setKoyoCoordinates(DEFAULT_ORIGIN);
+      }
+    };
+
+    fetchKoyoCoordinates();
+  }, [isMapReady, koyoCoordinates]);
+
+  // 古窯旅館からのルート描画（ルールに基づいて実行）
   const drawRouteFromOrigin = (points: { name: string; lat: number; lng: number; placeId?: string }[]) => {
     if (!map || points.length === 0) return;
+    
+    // 古窯旅館の座標を決定（取得済みならそれを使用、なければDEFAULT_ORIGIN）
+    const actualKoyoOrigin = koyoCoordinates || DEFAULT_ORIGIN;
 
-    // 広範囲な地名（県、市）を除外し、具体的な観光地のみに絞る
-    const filteredPoints = points.filter(p => 
-      !p.name.includes('県') && 
-      !p.name.includes('市') && 
-      !p.name.includes('町') &&
-      p.name !== '山形県' &&
-      p.name !== '上山市' &&
-      p.name !== '山形市'
-    );
+    // 広範囲な地名（県、市）を除外するかどうかはルールで制御
+    let filteredPoints = points;
+    if (routeRules.excludeBroadAreas) {
+      filteredPoints = points.filter(p => 
+        !p.name.includes('県') && 
+        !p.name.includes('市') && 
+        !p.name.includes('町') &&
+        p.name !== '山形県' &&
+        p.name !== '上山市' &&
+        p.name !== '山形市'
+      );
+    }
 
-    // 最大6つの地点に制限（Google Directions APIの制限: waypointは最大25個、10個以下は通常料金）
-    // 6地点 = 出発地1 + 経由地5 + 目的地1 → 経由地5個なので通常料金
-    const limitedPoints = filteredPoints.slice(0, 6);
+    // 最大地点数はルールで設定可能（デフォルト: 6）
+    const limitedPoints = filteredPoints.slice(0, routeRules.maxPoints);
 
     console.log(`🗺️ ルート描画対象: ${limitedPoints.length}件 (元: ${points.length}件)`);
     console.log('地点:', limitedPoints.map(p => p.name));
@@ -524,18 +832,51 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
     });
 
     // 1地点のみの場合は直接ルート
-    if (limitedPoints.length === 1 && !lodging && !origin) {
+    if (limitedPoints.length === 1 && !lodging) {
       // 名前リスト（出発→目的地）
+      // 出発地は常に「古窯旅館」
       setRoutePointNames(["古窯旅館", limitedPoints[0].name]);
       directionsService.route({
-        origin: DEFAULT_ORIGIN,
+        origin: actualKoyoOrigin, // 取得した「古窯旅館」の座標を使用
         destination: { lat: limitedPoints[0].lat, lng: limitedPoints[0].lng },
         travelMode: travelMode as any,
       }, (result, status) => {
         if (status === "OK" && result) {
           directionsRenderer.setDirections(result);
           routePolyline.current = directionsRenderer;
-          setRouteLegs(result.routes?.[0]?.legs ?? []);
+          const legs = result.routes?.[0]?.legs ?? [];
+          setRouteLegs(legs);
+          
+          // 既存のセグメントPolylineをクリア
+          routeSegmentPolylines.current.forEach(polyline => {
+            if (polyline) polyline.setMap(null);
+          });
+          routeSegmentPolylines.current = [];
+          
+          // 1地点でもlegがある場合はPolylineを作成
+          if (legs.length > 0) {
+            const leg = legs[0];
+            const path: google.maps.LatLng[] = [];
+            leg.steps.forEach(step => {
+              if (step.path) {
+                step.path.forEach(point => {
+                  path.push(point);
+                });
+              }
+            });
+            
+            if (path.length > 0) {
+              const polyline = new google.maps.Polyline({
+                path: path,
+                strokeColor: "#007BFF",
+                strokeWeight: 3,
+                strokeOpacity: 0.6,
+                map: map,
+              });
+              routeSegmentPolylines.current.push(polyline);
+            }
+          }
+          
           console.log("✅ ルート描画成功（1地点）");
         } else {
           console.warn("⚠️ ルート描画失敗（1地点）:", status);
@@ -543,29 +884,86 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
       });
     } else {
       // 複数地点の場合は経由地設定
-      const waypoints = limitedPoints.slice(0, -1).map(p => ({ 
+      // 出発地は常に「古窯旅館」の座標を使用
+      const startName = "古窯旅館";
+      const actualOrigin = actualKoyoOrigin; // 取得した「古窯旅館」の座標を使用
+      
+      // limitedPointsから「古窯旅館」を除外（出発地として扱うため）
+      const filteredPoints = limitedPoints.filter(p => p.name !== "古窯旅館");
+      
+      // 目的地を決定
+      const finalDestination = filteredPoints.length > 0 
+        ? filteredPoints[filteredPoints.length - 1]
+        : limitedPoints[limitedPoints.length - 1];
+      const destName = (lodging && lodging.trim().length > 0) ? lodging : finalDestination.name;
+      
+      // 経由地を設定（最後の地点は目的地なので除外）
+      const waypoints = filteredPoints.slice(0, -1).map(p => ({ 
         location: { lat: p.lat, lng: p.lng }, 
         stopover: true 
       }));
-      // 名前リスト（出発→経由→目的地）
-      const startName = (origin && origin.trim().length > 0) ? origin : "古窯旅館";
-      const destName = (lodging && lodging.trim().length > 0) ? lodging : limitedPoints[limitedPoints.length - 1].name;
-      setRoutePointNames([startName, ...limitedPoints.slice(0, -1).map(p => p.name), destName]);
+      
+      // 名前リスト（出発「古窯旅館」→経由→目的地）
+      const pointNames = filteredPoints.slice(0, -1).map(p => p.name);
+      setRoutePointNames([startName, ...pointNames, destName]);
 
       directionsService.route({
-        origin: (origin && origin.trim().length > 0) ? origin : DEFAULT_ORIGIN,
+        origin: actualOrigin,
         destination: (lodging && lodging.trim().length > 0)
           ? lodging
-          : { lat: limitedPoints[limitedPoints.length - 1].lat, lng: limitedPoints[limitedPoints.length - 1].lng },
+          : { lat: finalDestination.lat, lng: finalDestination.lng },
         waypoints,
         travelMode: travelMode as any,
-        // optimizeWaypoints: false（無効化）→ 通常料金（$5.00/1,000リクエスト）を適用
-        // optimizeWaypoints: true の場合は Directions Advanced SKU（$10.00/1,000リクエスト）が適用される
+        optimizeWaypoints: routeRules.optimizeWaypoints, // ルールで制御可能
+        // optimizeWaypoints: false → 通常料金（$5.00/1,000リクエスト）
+        // optimizeWaypoints: true → Directions Advanced SKU（$10.00/1,000リクエスト）
       }, (result, status) => {
         if (status === "OK" && result) {
           directionsRenderer.setDirections(result);
           routePolyline.current = directionsRenderer;
-          setRouteLegs(result.routes?.[0]?.legs ?? []);
+          const legs = result.routes?.[0]?.legs ?? [];
+          setRouteLegs(legs);
+          
+          // 既存のセグメントPolylineをクリア
+          routeSegmentPolylines.current.forEach(polyline => {
+            if (polyline) polyline.setMap(null);
+          });
+          routeSegmentPolylines.current = [];
+          
+          // 各legごとに個別のPolylineを作成
+          const route = result.routes?.[0];
+          if (route && route.overview_path) {
+            // 全体のパスから各legの範囲を取得
+            let currentPathIndex = 0;
+            legs.forEach((leg, legIndex) => {
+              // legの開始・終了座標からPolylineを作成
+              const startPoint = leg.start_location;
+              const endPoint = leg.end_location;
+              
+              // legのstepsから詳細なパスを取得
+              const path: google.maps.LatLng[] = [];
+              leg.steps.forEach(step => {
+                if (step.path) {
+                  step.path.forEach(point => {
+                    path.push(point);
+                  });
+                }
+              });
+              
+              if (path.length > 0) {
+                const polyline = new google.maps.Polyline({
+                  path: path,
+                  strokeColor: "#007BFF",
+                  strokeWeight: 3,
+                  strokeOpacity: 0.6,
+                  map: map,
+                });
+                routeSegmentPolylines.current.push(polyline);
+              }
+            });
+            console.log(`✅ ${routeSegmentPolylines.current.length}個のセグメントPolylineを作成`);
+          }
+          
           console.log("✅ ルート描画成功（複数地点）");
         } else {
           console.warn("⚠️ ルート描画失敗（複数地点）:", status);
@@ -573,14 +971,46 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
           if (limitedPoints.length > 1) {
             console.log("🔄 フォールバック: 最初の地点のみでルート描画");
             directionsService.route({
-              origin: DEFAULT_ORIGIN,
+              origin: actualKoyoOrigin,
               destination: { lat: limitedPoints[0].lat, lng: limitedPoints[0].lng },
               travelMode: travelMode as any,
             }, (fallbackResult, fallbackStatus) => {
               if (fallbackStatus === "OK" && fallbackResult) {
                 directionsRenderer.setDirections(fallbackResult);
                 routePolyline.current = directionsRenderer;
-                setRouteLegs(fallbackResult.routes?.[0]?.legs ?? []);
+                const fallbackLegs = fallbackResult.routes?.[0]?.legs ?? [];
+                setRouteLegs(fallbackLegs);
+                
+                // 既存のセグメントPolylineをクリア
+                routeSegmentPolylines.current.forEach(polyline => {
+                  if (polyline) polyline.setMap(null);
+                });
+                routeSegmentPolylines.current = [];
+                
+                // フォールバックでもPolylineを作成
+                if (fallbackLegs.length > 0) {
+                  const leg = fallbackLegs[0];
+                  const path: google.maps.LatLng[] = [];
+                  leg.steps.forEach(step => {
+                    if (step.path) {
+                      step.path.forEach(point => {
+                        path.push(point);
+                      });
+                    }
+                  });
+                  
+                  if (path.length > 0) {
+                    const polyline = new google.maps.Polyline({
+                      path: path,
+                      strokeColor: "#007BFF",
+                      strokeWeight: 3,
+                      strokeOpacity: 0.6,
+                      map: map,
+                    });
+                    routeSegmentPolylines.current.push(polyline);
+                  }
+                }
+                
                 console.log("✅ フォールバックルート描画成功");
               } else {
                 console.warn("⚠️ フォールバックルート描画失敗:", fallbackStatus);
@@ -590,6 +1020,71 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
         }
       });
     }
+  };
+
+  // ホバー/クリック時のハイライト処理
+  useEffect(() => {
+    // 点滅アニメーションをクリア
+    if (blinkIntervalRef.current) {
+      clearInterval(blinkIntervalRef.current);
+      blinkIntervalRef.current = null;
+    }
+
+    routeSegmentPolylines.current.forEach((polyline, index) => {
+      if (!polyline) return;
+      
+      const isHovered = hoveredSegmentIndex === index;
+      const isSelected = selectedSegmentIndex === index;
+      
+      if (isSelected) {
+        // 選択時: 点滅アニメーション（最初は明るく表示）
+        polyline.setOptions({
+          strokeColor: "#FF0000",
+          strokeWeight: 6,
+          strokeOpacity: 1.0,
+        });
+      } else if (isHovered) {
+        // ホバー時: オレンジ、太く
+        polyline.setOptions({
+          strokeColor: "#FF6B35",
+          strokeWeight: 5,
+          strokeOpacity: 1.0,
+        });
+      } else {
+        // 通常時: 青、通常の太さ
+        polyline.setOptions({
+          strokeColor: "#007BFF",
+          strokeWeight: 3,
+          strokeOpacity: 0.6,
+        });
+      }
+    });
+
+    // 選択されたセグメントがあれば点滅アニメーションを開始
+    if (selectedSegmentIndex !== null && routeSegmentPolylines.current[selectedSegmentIndex]) {
+      const selectedPolyline = routeSegmentPolylines.current[selectedSegmentIndex];
+      let currentOpacity = 1.0;
+      blinkIntervalRef.current = setInterval(() => {
+        currentOpacity = currentOpacity === 1.0 ? 0.5 : 1.0;
+        if (selectedPolyline) {
+          selectedPolyline.setOptions({
+            strokeOpacity: currentOpacity,
+          });
+        }
+      }, 500);
+    }
+
+    return () => {
+      if (blinkIntervalRef.current) {
+        clearInterval(blinkIntervalRef.current);
+        blinkIntervalRef.current = null;
+      }
+    };
+  }, [hoveredSegmentIndex, selectedSegmentIndex]);
+
+  // セグメント選択のトグル
+  const handleSegmentClick = (index: number) => {
+    setSelectedSegmentIndex(selectedSegmentIndex === index ? null : index);
   };
 
   const toggleCategory = (cat: string) => {
@@ -648,16 +1143,54 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
           </button>
         ))}
       </div>
-      {/* レッグ要約（下部） */}
-      {routeLegs && routeLegs.length > 0 && (
+      {/* レッグ要約（下部） - AI生成ルートまたはGoogle Directions APIルート */}
+      {(aiRouteSegments.length > 0 || (routeLegs && routeLegs.length > 0)) && (
         <div style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', background: '#ffffff', border: '1px solid #e5e7eb', borderRadius: 12, padding: '8px 12px', fontSize: 12, color: '#111827', zIndex: 2 }}>
-          {routeLegs.map((leg, i) => (
-            <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <span style={{ fontWeight: 700 }}>{i + 1}.</span>
-              <span>{routePointNames[i] ?? ''} → {routePointNames[i + 1] ?? ''}</span>
-              <span style={{ color: '#6b7280' }}>{leg.distance?.text} / {leg.duration?.text}</span>
-            </div>
-          ))}
+          {aiRouteSegments.length > 0 ? (
+            // AI生成ルート表（現在はハイライト非対応）
+            aiRouteSegments.map((segment, i) => (
+              <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ fontWeight: 700 }}>{i + 1}.</span>
+                <span>{segment.from} → {segment.to}</span>
+                {segment.distance && segment.duration && (
+                  <span style={{ color: '#6b7280' }}>{segment.distance} / {segment.duration}</span>
+                )}
+              </div>
+            ))
+          ) : (
+            // Google Directions APIルート表（ハイライト対応）
+            routeLegs.map((leg, i) => {
+              const isHovered = hoveredSegmentIndex === i;
+              const isSelected = selectedSegmentIndex === i;
+              return (
+                <div
+                  key={i}
+                  onMouseEnter={() => setHoveredSegmentIndex(i)}
+                  onMouseLeave={() => setHoveredSegmentIndex(null)}
+                  onClick={() => handleSegmentClick(i)}
+                  style={{
+                    display: 'flex',
+                    gap: 8,
+                    alignItems: 'center',
+                    padding: '4px 8px',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                    backgroundColor: isSelected ? '#FFF4E6' : isHovered ? '#F0F9FF' : 'transparent',
+                    border: isSelected ? '1px solid #FF6B35' : '1px solid transparent',
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  <span style={{ fontWeight: 700, color: isSelected ? '#FF6B35' : isHovered ? '#007BFF' : '#111827' }}>
+                    {i + 1}.
+                  </span>
+                  <span style={{ color: isSelected ? '#FF6B35' : isHovered ? '#007BFF' : '#111827' }}>
+                    {routePointNames[i] ?? ''} → {routePointNames[i + 1] ?? ''}
+                  </span>
+                  <span style={{ color: '#6b7280' }}>{leg.distance?.text} / {leg.duration?.text}</span>
+                </div>
+              );
+            })
+          )}
         </div>
       )}
       {selectedPlaceId && (

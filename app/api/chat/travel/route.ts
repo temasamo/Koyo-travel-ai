@@ -4,7 +4,7 @@ import OpenAI from "openai";
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 export async function POST(req: Request) {
-  const { messages } = await req.json();
+  const { messages, routeRules } = await req.json();
 
   // 最終ユーザーメッセージから日程（午前/午後/一日）を簡易判定
   const last = Array.isArray(messages) && messages.length > 0 ? messages[messages.length - 1] : null;
@@ -20,7 +20,16 @@ export async function POST(req: Request) {
   if (!scheduleMode) {
     const ask =
       "プラン作成の前に日程を教えてください。『午前』／『午後』／『一日』のいずれですか？";
-    return NextResponse.json({ reply: ask });
+    return NextResponse.json({ 
+      reply: ask,
+      routeRules: routeRules || {
+        maxPoints: 6,
+        excludeBroadAreas: true,
+        minConfidence: 0.9,
+        optimizeWaypoints: false,
+        autoGenerate: false,
+      }
+    });
   }
 
   // 日程モード別の追加システム指示
@@ -44,6 +53,16 @@ export async function POST(req: Request) {
 - 山形県内の観光地を中心に提案してください
 - 日程条件: ${scheduleSystem}
 
+**ルート表の形式（必須）**：
+提案の最後に、以下の形式でルート表を必ず含めてください：
+
+ルート表：
+1. 古窯旅館 → [最初の観光地] [距離]km / [移動時間]
+2. [最初の観光地] → [次の観光地] [距離]km / [移動時間]
+3. [次の観光地] → [さらに次の観光地] [距離]km / [移動時間]
+...
+
+各ルートの距離と移動時間は適切な値を推定して記載してください。
 提案はシンプルかつ実在のスポット名を含め、移動時間と滞在時間のバランスを取ってください。`,
       },
       ...messages,
@@ -52,5 +71,18 @@ export async function POST(req: Request) {
   });
 
   const reply = completion.choices[0].message.content;
-  return NextResponse.json({ reply });
+  
+  // ルート生成ルールを推論（日程モードに基づく）
+  const inferredRouteRules = routeRules || {
+    maxPoints: scheduleMode === "morning" ? 4 : scheduleMode === "afternoon" ? 3 : 6,
+    excludeBroadAreas: true,
+    minConfidence: 0.9,
+    optimizeWaypoints: false,
+    autoGenerate: false, // デフォルトで自動生成は無効
+  };
+  
+  return NextResponse.json({ 
+    reply,
+    routeRules: inferredRouteRules
+  });
 }
