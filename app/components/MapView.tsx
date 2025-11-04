@@ -52,6 +52,7 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
   const [routeLegs, setRouteLegs] = useState<google.maps.DirectionsLeg[]>([]);
   const [routePointNames, setRoutePointNames] = useState<string[]>([]);
   const [aiRouteSegments, setAiRouteSegments] = useState<Array<{from: string; to: string; distance?: string; duration?: string}>>([]);
+  const [shouldShowAiRoute, setShouldShowAiRoute] = useState(false); // ルート表表示フラグ
   // 各ルートセグメントのPolylineを管理（ハイライト用）
   const routeSegmentPolylines = useRef<google.maps.Polyline[]>([]);
   const [hoveredSegmentIndex, setHoveredSegmentIndex] = useState<number | null>(null);
@@ -109,22 +110,16 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
   // Planのテキストから地名抽出とルート情報抽出 → マップへ反映
   useEffect(() => {
     const extract = async () => {
-      if (!planMessage || !isMapReady) return;
-      
-      // スタッフおすすめモードの場合、AI生成ルートは使用しない
-      if (showStaffRecommendations) {
-        console.log("⏸️ スタッフおすすめモード: AI生成ルートをスキップ");
-        // AI生成ルート関連をクリア
-        setAiRouteSegments([]);
-        if (aiRoutePolyline.current) {
-          aiRoutePolyline.current.setMap(null);
-          aiRoutePolyline.current = null;
-        }
+      console.log("🔍 extract開始 - planMessage:", planMessage ? "存在" : "なし", "isMapReady:", isMapReady);
+      if (!planMessage || !isMapReady) {
+        console.log("⏸️ planMessageまたはisMapReadyが未準備のためスキップ");
         return;
       }
       
-      // 古いルート情報をクリア
+      // 古いルート情報をクリア（AI生成ルートが抽出される前に、既存のルート情報をクリア）
+      // ただし、スタッフおすすめモードで既にAI生成ルートが存在する場合は、抽出後に上書きされるため一時的にクリア
       setAiRouteSegments([]);
+      setShouldShowAiRoute(false); // ルート表表示フラグもリセット
       setRouteLegs([]);
       setRoutePointNames([]);
       // AIルート線もクリア
@@ -133,6 +128,7 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
         aiRoutePolyline.current = null;
       }
       
+      // スタッフおすすめモードでも、AIが提案したルートを抽出する
       try {
         // 地名抽出
         const locRes = await fetch("/api/ai/extract-locations", {
@@ -157,12 +153,13 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
         
         if (routeSegments.length > 0) {
           console.log("✅ AI生成ルート情報を抽出:", routeSegments);
+          console.log("🔘 ルート表とボタンが表示されるはずです。aiRouteSegments:", routeSegments.length, "件");
           setAiRouteSegments(routeSegments);
           // Google Directions APIのルートは不要なのでクリア
           setRouteLegs([]);
           setRoutePointNames([]);
-          // ルート線を描画
-          drawAiRouteLines(routeSegments, locs);
+          // ルート線は「ルートを表示する」ボタンを押したときに描画
+          setShouldShowAiRoute(false);
         } else {
           console.log("⚠️ ルート情報が見つからない - 地名の順番からルート表を作成");
           // ルート情報が見つからない場合、地名の順番からルート表を作成
@@ -189,8 +186,8 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
             }
             console.log("📍 地名順から生成したルート表:", segmentsFromLocs);
             setAiRouteSegments(segmentsFromLocs);
-            // ルート線を描画
-            drawAiRouteLines(segmentsFromLocs, locs);
+            // ルート線は「ルートを表示する」ボタンを押したときに描画
+            setShouldShowAiRoute(false);
           }
         }
       } catch (e) {
@@ -201,7 +198,35 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [planMessage, isMapReady, showStaffRecommendations]);
 
-  // AI生成ルートの地点間に線を引く
+  // shouldShowAiRouteがtrueになったときにルートを描画
+  useEffect(() => {
+    if (shouldShowAiRoute && aiRouteSegments.length > 0 && map && isMapReady) {
+      console.log("✅ ルート表示ボタンが押されました。ルートを描画します。");
+      // スタッフおすすめモードの場合は、STAFF_RECOMMENDATIONSから座標を取得
+      if (showStaffRecommendations) {
+        console.log("📍 スタッフおすすめモード: STAFF_RECOMMENDATIONSから座標を取得");
+        // スタッフおすすめの地点をLocation形式に変換
+        const staffLocationsForRoute: Location[] = STAFF_RECOMMENDATIONS.map(rec => ({
+          name: rec.name,
+          type: 'attraction',
+          confidence: 1.0,
+          categories: rec.categories,
+          address: rec.address,
+          lat: rec.lat,
+          lng: rec.lng,
+        }));
+        drawAiRouteLines(aiRouteSegments, staffLocationsForRoute);
+      } else if (extractedFromPlan.length > 0) {
+        // AIプランモードの場合
+        drawAiRouteLines(aiRouteSegments, extractedFromPlan);
+      } else {
+        console.warn("⚠️ ルート描画に必要な地点情報がありません");
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shouldShowAiRoute, aiRouteSegments, extractedFromPlan, map, isMapReady, showStaffRecommendations]);
+
+  // AI生成ルートの地点間に線を引く（Google Directions APIを使用して実際の道路に沿ったルートを取得）
   const drawAiRouteLines = async (segments: Array<{from: string; to: string; distance?: string; duration?: string}>, locations: Location[]) => {
     if (!map || !isMapReady || segments.length === 0) return;
 
@@ -233,10 +258,12 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
       locationMap.set("古窯旅館", { lat: DEFAULT_ORIGIN.lat, lng: DEFAULT_ORIGIN.lng });
 
       // 各セグメントの座標を取得
-      const path: google.maps.LatLng[] = [];
       const missingLocations: string[] = [];
-      const processedLocations = new Set<string>();
+      const allPaths: google.maps.LatLng[] = [];
 
+      const directionsService = new google.maps.DirectionsService();
+
+      // 各セグメントごとにGoogle Directions APIを呼び出して実際の道路に沿ったルートを取得
       for (const segment of segments) {
         // 出発地点の座標を取得
         let fromCoord = locationMap.get(segment.from);
@@ -304,16 +331,45 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
           }
         }
 
-        // 出発地点を追加（まだ追加されていない場合）
-        if (!processedLocations.has(segment.from) && fromCoord) {
-          path.push(new google.maps.LatLng(fromCoord.lat, fromCoord.lng));
-          processedLocations.add(segment.from);
-        }
-
-        // 目的地を追加
-        if (toCoord) {
-          path.push(new google.maps.LatLng(toCoord.lat, toCoord.lng));
-          processedLocations.add(segment.to);
+        // Google Directions APIで実際の道路に沿ったルートを取得
+        if (fromCoord && toCoord) {
+          try {
+            await new Promise<void>((resolve, reject) => {
+              directionsService.route({
+                origin: new google.maps.LatLng(fromCoord!.lat, fromCoord!.lng),
+                destination: new google.maps.LatLng(toCoord!.lat, toCoord!.lng),
+                travelMode: travelMode as any,
+              }, (result, status) => {
+                if (status === "OK" && result) {
+                  // ルートのパスを取得（stepsから詳細なパスを取得）
+                  const route = result.routes?.[0];
+                  if (route && route.legs && route.legs.length > 0) {
+                    const leg = route.legs[0];
+                    // legのstepsから詳細なパスを取得
+                    leg.steps.forEach(step => {
+                      if (step.path) {
+                        step.path.forEach(point => {
+                          allPaths.push(point);
+                        });
+                      }
+                    });
+                  }
+                  resolve();
+                } else {
+                  console.warn(`⚠️ ルート取得失敗 (${segment.from} → ${segment.to}):`, status);
+                  // フォールバック: 直線で結ぶ
+                  allPaths.push(new google.maps.LatLng(fromCoord!.lat, fromCoord!.lng));
+                  allPaths.push(new google.maps.LatLng(toCoord!.lat, toCoord!.lng));
+                  resolve();
+                }
+              });
+            });
+          } catch (e) {
+            console.warn(`ルート取得エラー (${segment.from} → ${segment.to}):`, e);
+            // フォールバック: 直線で結ぶ
+            allPaths.push(new google.maps.LatLng(fromCoord.lat, fromCoord.lng));
+            allPaths.push(new google.maps.LatLng(toCoord.lat, toCoord.lng));
+          }
         }
       }
 
@@ -321,10 +377,10 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
         console.warn("⚠️ 座標が見つからない地点:", missingLocations);
       }
 
-      if (path.length >= 2) {
-        // Polylineを描画
+      if (allPaths.length >= 2) {
+        // Polylineを描画（実際の道路に沿ったルート）
         const polyline = new google.maps.Polyline({
-          path: path,
+          path: allPaths,
           geodesic: true,
           strokeColor: "#007BFF",
           strokeOpacity: 0.6,
@@ -332,7 +388,7 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
           map: map,
         });
         aiRoutePolyline.current = polyline;
-        console.log("✅ AI生成ルート線を描画:", path.length, "地点");
+        console.log("✅ AI生成ルート線を描画（道路に沿ったルート）:", allPaths.length, "地点");
       } else {
         console.warn("⚠️ ルート線描画に必要な座標が不足しています");
       }
@@ -426,6 +482,28 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
   // 地名に基づいてピンを追加し、ルートを描画する機能
   useEffect(() => {
     console.log("🔍 MapView useEffect - map:", !!map, "isMapReady:", isMapReady, "locations:", locations, "showStaffRecommendations:", showStaffRecommendations);
+    
+    // スタッフおすすめモードになったとき、既存のルート情報をクリア
+    if (showStaffRecommendations) {
+      console.log("🔍 スタッフおすすめモード: 既存のルート情報をクリア");
+      setRouteLegs([]);
+      setRoutePointNames([]);
+      setAiRouteSegments([]);
+      setShouldShowAiRoute(false);
+      if (routePolyline.current) {
+        routePolyline.current.setMap(null);
+        routePolyline.current = null;
+      }
+      if (aiRoutePolyline.current) {
+        aiRoutePolyline.current.setMap(null);
+        aiRoutePolyline.current = null;
+      }
+      // セグメントPolylineもクリア
+      routeSegmentPolylines.current.forEach(polyline => {
+        if (polyline) polyline.setMap(null);
+      });
+      routeSegmentPolylines.current = [];
+    }
     
     // スタッフおすすめスポットをLocation形式に変換（座標も含む）
     const staffLocations: Location[] = showStaffRecommendations 
@@ -728,9 +806,70 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
     
     if (resolved.length > 0) {
       setMarkers(newMarkers);
-      // スタッフおすすめモードの場合は自動的にルート生成
-      // それ以外はルート生成ルールに基づいて判断
-      const shouldAutoGenerate = showStaffRecommendations || routeRules.autoGenerate || shouldGenerateRoute;
+      
+      // スタッフおすすめモードの場合、AIが提案したルートセグメントが既に存在する場合は使用し、存在しない場合のみ全スポット間のルートを生成
+      if (showStaffRecommendations && resolved.length > 1) {
+        // AIが提案したルートセグメントが既に存在する場合は、それを使用する（上書きしない）
+        if (aiRouteSegments.length > 0) {
+          console.log("✅ スタッフおすすめモード: AIが提案したルートセグメントを使用（", aiRouteSegments.length, "件）");
+          setShouldShowAiRoute(false); // 初期状態ではルートは表示しない
+          return; // AIが提案したルートを使用するため、ここで終了
+        }
+        
+        // planMessageが存在する場合は、AIが提案したルートを抽出するまで待つ（全スポット間のルートは生成しない）
+        if (planMessage) {
+          console.log("⏸️ スタッフおすすめモード: planMessageが存在するため、AIが提案したルートを待機中（全スポット間のルートは生成しない）");
+          setShouldShowAiRoute(false);
+          return;
+        }
+        
+        console.log("⚠️ スタッフおすすめモード: AIが提案したルートがないため、全スポット間のルートを生成");
+        // 古窯旅館から開始するルートセグメントを生成
+        const segments: Array<{from: string; to: string; distance?: string; duration?: string}> = [];
+        
+        // 古窯旅館を最初に追加（存在する場合）
+        const hasKoyo = resolved.some(r => r.name === "古窯旅館");
+        const startIndex = hasKoyo ? resolved.findIndex(r => r.name === "古窯旅館") : 0;
+        
+        // 古窯旅館が最初でない場合、古窯旅館から最初の地点へのルートを追加
+        if (!hasKoyo || startIndex !== 0) {
+          segments.push({
+            from: "古窯旅館",
+            to: resolved[0].name,
+            distance: "推定",
+            duration: "推定"
+          });
+        }
+        
+        // 残りの地点間のルート
+        for (let i = 0; i < resolved.length - 1; i++) {
+          segments.push({
+            from: resolved[i].name,
+            to: resolved[i + 1].name,
+            distance: "推定",
+            duration: "推定"
+          });
+        }
+        
+        // 最後の地点から古窯旅館へのルート（古窯旅館が最初でない場合）
+        if (!hasKoyo || startIndex !== 0) {
+          segments.push({
+            from: resolved[resolved.length - 1].name,
+            to: "古窯旅館",
+            distance: "推定",
+            duration: "推定"
+          });
+        }
+        
+        console.log("📍 スタッフおすすめ全スポット間ルートセグメント:", segments);
+        setAiRouteSegments(segments);
+        setShouldShowAiRoute(false); // 初期状態ではルートは表示しない
+        return; // スタッフおすすめモードではGoogle Directions APIのルート生成は行わない
+      }
+      
+      // スタッフおすすめモードではルートを自動生成しない（AIプランが生成された後にルートを表示）
+      // ルート生成ルールに基づいて判断
+      const shouldAutoGenerate = (!showStaffRecommendations && routeRules.autoGenerate) || shouldGenerateRoute;
       
       if (shouldAutoGenerate) {
         drawRouteFromOrigin(resolved);
@@ -1144,8 +1283,47 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
           </button>
         ))}
       </div>
+      {/* ルートを表示するボタン（AIプランが生成されているが、まだルートが表示されていないとき） */}
+      {(() => {
+        // スタッフおすすめモードでも、ルートセグメントが存在する場合はボタンを表示
+        const shouldShowButton = aiRouteSegments.length > 0 && !shouldShowAiRoute;
+        if (aiRouteSegments.length > 0) {
+          console.log("🔍 ボタン表示条件チェック:", {
+            showStaffRecommendations,
+            aiRouteSegmentsLength: aiRouteSegments.length,
+            shouldShowAiRoute,
+            shouldShowButton
+          });
+        }
+        return shouldShowButton;
+      })() && (
+        <button
+          onClick={() => {
+            console.log("🔘 ルートを表示するボタンがクリックされました");
+            setShouldShowAiRoute(true);
+          }}
+          style={{
+            position: 'absolute',
+            top: 60,
+            right: 12,
+            padding: '10px 20px',
+            borderRadius: 8,
+            border: '1px solid #007BFF',
+            background: '#007BFF',
+            color: '#ffffff',
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: 'pointer',
+            boxShadow: '0 2px 8px rgba(0,123,255,0.3)',
+            whiteSpace: 'nowrap',
+            zIndex: 10,
+          }}
+        >
+          ルートを表示する
+        </button>
+      )}
       {/* レッグ要約（下部） - AI生成ルートまたはGoogle Directions APIルート */}
-      {(aiRouteSegments.length > 0 || (routeLegs && routeLegs.length > 0)) && (
+      {(shouldShowAiRoute && aiRouteSegments.length > 0 || (routeLegs && routeLegs.length > 0)) && (
         <div style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', background: '#ffffff', border: '1px solid #e5e7eb', borderRadius: 12, padding: '8px 12px', fontSize: 12, color: '#111827', zIndex: 2 }}>
           {aiRouteSegments.length > 0 ? (
             // AI生成ルート表（現在はハイライト非対応）

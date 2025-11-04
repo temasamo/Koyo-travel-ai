@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
+import { STAFF_RECOMMENDATIONS } from "@/constants/staffRecommendations";
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 export async function POST(req: Request) {
-  const { messages, routeRules } = await req.json();
+  const { messages, routeRules, showStaffRecommendations } = await req.json();
 
   // 最終ユーザーメッセージから日程（午前/午後/一日）を簡易判定
   const last = Array.isArray(messages) && messages.length > 0 ? messages[messages.length - 1] : null;
@@ -40,6 +41,24 @@ export async function POST(req: Request) {
       ? "午後プラン。移動距離は短め（例: 2-5km）。立ち寄りは1-3件。短時間で楽しめる近場中心。"
       : "一日プラン。午前と午後を通して無理のない行程。移動距離は中程度（例: 5-15km）で3-6件程度。";
 
+  // スタッフおすすめモードの場合、スタッフおすすめスポットのリストを取得
+  let staffRecommendationConstraint = "";
+  if (showStaffRecommendations) {
+    const staffSpotNames = STAFF_RECOMMENDATIONS.map(rec => rec.name).join("、");
+    staffRecommendationConstraint = `
+
+**重要：スタッフおすすめモード**
+以下のスタッフおすすめスポットのみを使用してプランを提案してください。リストにないスポットは一切提案しないでください。
+
+スタッフおすすめスポット一覧：
+${staffSpotNames}
+
+絶対に守ること：
+- 上記リストに含まれるスポットのみを使用してください
+- リストにないスポット（例：蔵王温泉、蔵王エコーライン、大平山、神町温泉郷、大源太温泉など）は提案しないでください
+- ユーザーが希望するスポットがリストにない場合でも、リスト内のスポットのみを使用してください`;
+  }
+
   const completion = await client.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
@@ -52,6 +71,7 @@ export async function POST(req: Request) {
 - 地名は具体的で検索可能な形で記載してください
 - 山形県内の観光地を中心に提案してください
 - 日程条件: ${scheduleSystem}
+${staffRecommendationConstraint}
 
 **ルート表の形式（必須）**：
 提案の最後に、以下の形式でルート表を必ず含めてください：

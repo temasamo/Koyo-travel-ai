@@ -18,7 +18,7 @@ interface ChatInterfaceProps {
 }
 
 export default function ChatInterface({ onLocationsExtracted, selectedPlace }: ChatInterfaceProps) {
-  const { planMessage, setPlanMessage, setRouteRules, triggerRouteGeneration } = usePlanStore();
+  const { planMessage, setPlanMessage, setRouteRules, triggerRouteGeneration, showStaffRecommendations } = usePlanStore();
   const [messages, setMessages] = useState<{ role: string; content: string }[]>([
     { role: "assistant", content: "こんにちは！上山旅コンシェルジュです。行きたい場所や気分を教えてください。" },
   ]);
@@ -56,7 +56,10 @@ export default function ChatInterface({ onLocationsExtracted, selectedPlace }: C
       const res = await fetch("/api/chat/travel", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: [...messages, newMessage] }),
+        body: JSON.stringify({ 
+          messages: [...messages, newMessage],
+          showStaffRecommendations: showStaffRecommendations
+        }),
       });
       const data = await res.json();
       setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
