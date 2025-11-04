@@ -526,7 +526,8 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
     };
 
     addLocationMarkersAndRoute();
-  }, [map, isMapReady, locations, extractedFromPlan, showStaffRecommendations, routeRules, shouldGenerateRoute]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, isMapReady, locations, extractedFromPlan, showStaffRecommendations, shouldGenerateRoute]);
 
   // 地名解決とマーカー・ルート描画
   const resolveAndRender = async (candidates: any[]) => {
