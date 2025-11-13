@@ -55,9 +55,14 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
   const [shouldShowAiRoute, setShouldShowAiRoute] = useState(false); // ルート表表示フラグ
   // 各ルートセグメントのPolylineを管理（ハイライト用）
   const routeSegmentPolylines = useRef<google.maps.Polyline[]>([]);
+  // AI生成ルート用のPolylineを管理（ホバー用）
+  const aiRouteSegmentPolylines = useRef<google.maps.Polyline[]>([]);
   const [hoveredSegmentIndex, setHoveredSegmentIndex] = useState<number | null>(null);
+  const [hoveredAiSegmentIndex, setHoveredAiSegmentIndex] = useState<number | null>(null);
   const [selectedSegmentIndex, setSelectedSegmentIndex] = useState<number | null>(null);
   const blinkIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  // 地点名から座標へのマッピング（AI生成ルート用）
+  const locationCoordinatesMap = useRef<Map<string, {lat: number; lng: number}>>(new Map());
   // 初期レンダリング時には google は未定義のため、プレーン文字列で管理
   const [travelMode, setTravelMode] = useState<'DRIVING' | 'WALKING' | 'TRANSIT'>('DRIVING');
   const infoWindows = useRef<google.maps.InfoWindow[]>([]);
@@ -77,7 +82,7 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
       new Promise<void>((resolve, reject) => {
         if (window.google?.maps) return resolve();
         const s = document.createElement("script");
-        s.src = `https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}&libraries=marker,places&v=weekly`;
+        s.src = `https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}&libraries=marker,places,geometry&v=weekly`;
         s.async = true;
         s.onload = () => resolve();
         s.onerror = () => reject(new Error("Google Maps failed to load"));
@@ -804,6 +809,14 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
 
     console.log(`✅ 解決完了 - マーカー: ${newMarkers.length}件, 解決済み: ${resolved.length}件`);
     
+    // 地点名から座標へのマッピングを更新
+    resolved.forEach(r => {
+      locationCoordinatesMap.current.set(r.name, { lat: r.lat, lng: r.lng });
+    });
+    // 古窯旅館の座標も追加
+    const actualKoyoOrigin = koyoCoordinates || DEFAULT_ORIGIN;
+    locationCoordinatesMap.current.set("古窯旅館", actualKoyoOrigin);
+    
     if (resolved.length > 0) {
       setMarkers(newMarkers);
       
@@ -1227,6 +1240,160 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
     setSelectedSegmentIndex(selectedSegmentIndex === index ? null : index);
   };
 
+  // AI生成ルートのホバー時にルートを描画
+  useEffect(() => {
+    if (!map || !isMapReady || hoveredAiSegmentIndex === null) {
+      // ホバー解除時は既存のPolylineをクリア
+      aiRouteSegmentPolylines.current.forEach(polyline => {
+        if (polyline) polyline.setMap(null);
+      });
+      aiRouteSegmentPolylines.current = [];
+      return;
+    }
+
+    const segment = aiRouteSegments[hoveredAiSegmentIndex];
+    if (!segment) {
+      console.log("⚠️ セグメントが見つかりません:", hoveredAiSegmentIndex);
+      return;
+    }
+
+    console.log("🖱️ ホバー検出:", segment.from, "→", segment.to);
+
+    // 地点名から座標を取得
+    const fromCoords = locationCoordinatesMap.current.get(segment.from);
+    const toCoords = locationCoordinatesMap.current.get(segment.to);
+    console.log("📍 座標取得:", { from: fromCoords, to: toCoords });
+
+    // 座標が取得できない場合はPlaces APIで検索
+    const fetchRoute = async () => {
+      let fromPos = fromCoords;
+      let toPos = toCoords;
+
+      // fromの座標が取得できない場合
+      if (!fromPos) {
+        if (segment.from === "古窯旅館") {
+          fromPos = koyoCoordinates || DEFAULT_ORIGIN;
+        } else {
+          try {
+            const searchRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Goog-Api-Key": String(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY),
+                "X-Goog-FieldMask": "places.location",
+              },
+              body: JSON.stringify({
+                textQuery: `${segment.from} 山形県`,
+                languageCode: "ja",
+                regionCode: "JP",
+              }),
+            });
+            const searchData = await searchRes.json();
+            const place = searchData.places?.[0];
+            if (place?.location) {
+              fromPos = { lat: place.location.latitude, lng: place.location.longitude };
+              locationCoordinatesMap.current.set(segment.from, fromPos);
+            }
+          } catch (error) {
+            console.error(`❌ 地点検索エラー (${segment.from}):`, error);
+          }
+        }
+      }
+
+      // toの座標が取得できない場合
+      if (!toPos) {
+        if (segment.to === "古窯旅館") {
+          toPos = koyoCoordinates || DEFAULT_ORIGIN;
+        } else {
+          try {
+            const searchRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Goog-Api-Key": String(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY),
+                "X-Goog-FieldMask": "places.location",
+              },
+              body: JSON.stringify({
+                textQuery: `${segment.to} 山形県`,
+                languageCode: "ja",
+                regionCode: "JP",
+              }),
+            });
+            const searchData = await searchRes.json();
+            const place = searchData.places?.[0];
+            if (place?.location) {
+              toPos = { lat: place.location.latitude, lng: place.location.longitude };
+              locationCoordinatesMap.current.set(segment.to, toPos);
+            }
+          } catch (error) {
+            console.error(`❌ 地点検索エラー (${segment.to}):`, error);
+          }
+        }
+      }
+
+      // 両方の座標が取得できた場合のみルートを描画
+      if (fromPos && toPos) {
+        console.log("✅ 座標取得完了、ルートを取得します:", { from: fromPos, to: toPos });
+        const directionsService = new google.maps.DirectionsService();
+        directionsService.route({
+          origin: fromPos,
+          destination: toPos,
+          travelMode: travelMode as any,
+        }, (result, status) => {
+          console.log("🗺️ Directions API結果:", status);
+          if (status === "OK" && result) {
+            // 既存のPolylineをクリア
+            aiRouteSegmentPolylines.current.forEach(polyline => {
+              if (polyline) polyline.setMap(null);
+            });
+            aiRouteSegmentPolylines.current = [];
+
+            // ルートの各legをPolylineとして描画
+            const route = result.routes[0];
+            if (route && route.legs && route.legs.length > 0) {
+              // 各legのステップからpathを構築
+              const path: google.maps.LatLng[] = [];
+              route.legs.forEach(leg => {
+                if (leg.steps) {
+                  leg.steps.forEach(step => {
+                    if (step.path) {
+                      step.path.forEach(point => {
+                        path.push(point);
+                      });
+                    }
+                  });
+                }
+              });
+              
+              if (path.length > 0) {
+                console.log("✅ ルートを描画します:", path.length, "地点");
+                const polyline = new google.maps.Polyline({
+                  path: path,
+                  map: map,
+                  strokeColor: "#FF6B35",
+                  strokeWeight: 5,
+                  strokeOpacity: 1.0,
+                });
+                aiRouteSegmentPolylines.current.push(polyline);
+                console.log("✅ オレンジ色のルートを描画しました");
+              } else {
+                console.warn("⚠️ pathが空です");
+              }
+            } else {
+              console.warn("⚠️ ルートが見つかりません");
+            }
+          } else {
+            console.error("❌ Directions APIエラー:", status);
+          }
+        });
+      } else {
+        console.warn("⚠️ 座標が取得できませんでした:", { fromPos, toPos });
+      }
+    };
+
+    fetchRoute();
+  }, [hoveredAiSegmentIndex, map, isMapReady, aiRouteSegments, travelMode, koyoCoordinates]);
+
   const toggleCategory = (cat: string) => {
     const set = new Set(selectedCategories || []);
     if (set.has(cat)) set.delete(cat); else set.add(cat);
@@ -1323,19 +1490,47 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
         </button>
       )}
       {/* レッグ要約（下部） - AI生成ルートまたはGoogle Directions APIルート */}
-      {(shouldShowAiRoute && aiRouteSegments.length > 0 || (routeLegs && routeLegs.length > 0)) && (
+      {(aiRouteSegments.length > 0 || (routeLegs && routeLegs.length > 0)) && (
         <div style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', background: '#ffffff', border: '1px solid #e5e7eb', borderRadius: 12, padding: '8px 12px', fontSize: 12, color: '#111827', zIndex: 2 }}>
           {aiRouteSegments.length > 0 ? (
-            // AI生成ルート表（現在はハイライト非対応）
-            aiRouteSegments.map((segment, i) => (
-              <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <span style={{ fontWeight: 700 }}>{i + 1}.</span>
-                <span>{segment.from} → {segment.to}</span>
-                {segment.distance && segment.duration && (
-                  <span style={{ color: '#6b7280' }}>{segment.distance} / {segment.duration}</span>
-                )}
-              </div>
-            ))
+            // AI生成ルート表（ホバー対応）
+            aiRouteSegments.map((segment, i) => {
+              const isHovered = hoveredAiSegmentIndex === i;
+              return (
+                <div
+                  key={i}
+                  onMouseEnter={() => {
+                    console.log("🖱️ マウスホバー開始:", i, segment);
+                    setHoveredAiSegmentIndex(i);
+                  }}
+                  onMouseLeave={() => {
+                    console.log("🖱️ マウスホバー終了:", i);
+                    setHoveredAiSegmentIndex(null);
+                  }}
+                  style={{
+                    display: 'flex',
+                    gap: 8,
+                    alignItems: 'center',
+                    padding: '4px 8px',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                    backgroundColor: isHovered ? '#F0F9FF' : 'transparent',
+                    border: '1px solid transparent',
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  <span style={{ fontWeight: 700, color: isHovered ? '#007BFF' : '#111827' }}>
+                    {i + 1}.
+                  </span>
+                  <span style={{ color: isHovered ? '#007BFF' : '#111827' }}>
+                    {segment.from} → {segment.to}
+                  </span>
+                  {segment.distance && segment.duration && (
+                    <span style={{ color: '#6b7280' }}>{segment.distance} / {segment.duration}</span>
+                  )}
+                </div>
+              );
+            })
           ) : (
             // Google Directions APIルート表（ハイライト対応）
             routeLegs.map((leg, i) => {
