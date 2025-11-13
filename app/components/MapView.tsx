@@ -1490,7 +1490,8 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
         </button>
       )}
       {/* レッグ要約（下部） - AI生成ルートまたはGoogle Directions APIルート */}
-      {(aiRouteSegments.length > 0 || (routeLegs && routeLegs.length > 0)) && (
+      {/* スタッフおすすめモードでAIがルートを生成していない場合は表示しない */}
+      {((aiRouteSegments.length > 0 && (planMessage || !showStaffRecommendations)) || (routeLegs && routeLegs.length > 0)) && (
         <div style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', background: '#ffffff', border: '1px solid #e5e7eb', borderRadius: 12, padding: '8px 12px', fontSize: 12, color: '#111827', zIndex: 2 }}>
           {aiRouteSegments.length > 0 ? (
             // AI生成ルート表（ホバー対応）
