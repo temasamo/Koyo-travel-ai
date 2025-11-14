@@ -1383,7 +1383,12 @@ function ActualMapView({ locations = [], onPlaceClick }: MapViewProps) {
               console.warn("⚠️ ルートが見つかりません");
             }
           } else {
-            console.error("❌ Directions APIエラー:", status);
+            // ZERO_RESULTSはルートが見つからない場合の正常なレスポンス
+            if (status === "ZERO_RESULTS") {
+              console.warn("⚠️ ルートが見つかりませんでした (ZERO_RESULTS)");
+            } else {
+              console.error("❌ Directions APIエラー:", status);
+            }
           }
         });
       } else {
